@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="64" cy="64" r="60" fill="#2C2C2C" />
+  
+  <!-- Version Number -->
+  <text x="64" y="50" font-family="Monaco, monospace" font-size="24" fill="#89D185" text-anchor="middle">v1.0.0</text>
+  
+  <!-- Sync Arrows -->
+  <g transform="translate(64, 75) rotate(45)">
+    <!-- Right Arrow -->
+    <path d="M-25,-5 L-5,-5 L-5,-15 L15,0 L-5,15 L-5,5 L-25,5 Z" fill="#C586C0"/>
+    <!-- Left Arrow -->
+    <path d="M25,5 L5,5 L5,15 L-15,0 L5,-15 L5,-5 L25,-5 Z" fill="#4EC9B0"/>
+  </g>
+  
+  <!-- GitHub Mark (simplified) -->
+  <path d="M64,25 C42,25 24,43 24,65 C24,83 35,98 51,103 C53,103 54,102 54,101 L54,95 C42,98 40,89 40,89 C38,84 36,82 36,82 C33,79 36,79 36,79 C39,79 41,82 41,82 C44,88 49,89 52,88 C52,85 53,83 54,82 C44,81 34,77 34,61 C34,56 36,52 38,49 C38,48 37,44 39,39 C39,39 43,38 54,45 C57,44 61,43 64,43 C67,43 71,44 74,45 C85,38 89,39 89,39 C91,44 90,48 90,49 C92,52 94,56 94,61 C94,77 84,81 74,82 C75,83 76,86 76,89 L76,101 C76,102 77,103 79,103 C95,98 104,83 104,65 C104,43 86,25 64,25 Z" fill="#FFFFFF"/>
+</svg>
