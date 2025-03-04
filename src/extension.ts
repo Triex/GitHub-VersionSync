@@ -8,7 +8,8 @@ const EXTENSION_NAME = 'github-versionsync';
 const PACKAGE_JSON = 'package.json';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
-let currentVersionMode: 'major' | 'minor' | 'patch' | 'custom' = 'patch';
+type VersionType = 'major' | 'minor' | 'patch' | 'custom';
+let currentVersionMode: VersionType = 'patch';
 let customVersion: string | undefined;
 let nextVersion: string = '';
 
@@ -16,62 +17,74 @@ class VersionQuickPickItem implements vscode.QuickPickItem {
     constructor(
         public label: string,
         public description: string,
-        public type: 'major' | 'minor' | 'patch' | 'custom'
+        public type: VersionType
     ) {}
 }
 
-class VersionTreeItem extends vscode.TreeItem {
-    constructor(
-        public readonly label: string,
-        public readonly description: string,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly command?: vscode.Command
-    ) {
-        super(label, collapsibleState);
-        this.description = description;
-        this.tooltip = 'Click to change version';
-        this.iconPath = new vscode.ThemeIcon('versions');
-        this.contextValue = 'versionItem';
-    }
-}
-
-class VersionSelectorProvider implements vscode.TreeDataProvider<VersionTreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<VersionTreeItem | undefined | null | void> = new vscode.EventEmitter<VersionTreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<VersionTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
     }
 
-    getTreeItem(element: VersionTreeItem): vscode.TreeItem {
+    getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
 
-    async getChildren(element?: VersionTreeItem): Promise<VersionTreeItem[]> {
-        if (element) {
-            return [];
+    getChildren(): vscode.TreeItem[] {
+        const currentVersion = this.getCurrentVersion();
+        const nextVer = nextVersion || this.bumpVersion(currentVersion, currentVersionMode);
+
+        const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
+        currentItem.iconPath = new vscode.ThemeIcon('tag');
+        
+        const nextItem = new vscode.TreeItem(`Next: ${nextVer}`, vscode.TreeItemCollapsibleState.None);
+        nextItem.iconPath = new vscode.ThemeIcon('arrow-up');
+        nextItem.command = {
+            command: 'extension.selectVersionType',
+            title: 'Select Version Type'
+        };
+
+        return [currentItem, nextItem];
+    }
+
+    getCurrentVersion(): string {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            return '0.0.1';
         }
 
-        const currentVersion = getCurrentVersion();
-        const nextVer = nextVersion || bumpVersion(currentVersion, currentVersionMode);
+        const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
         
-        return [
-            new VersionTreeItem(
-                'Current Version',
-                currentVersion,
-                vscode.TreeItemCollapsibleState.None
-            ),
-            new VersionTreeItem(
-                'Next Version',
-                nextVer,
-                vscode.TreeItemCollapsibleState.None,
-                {
-                    command: 'extension.selectVersionType',
-                    title: 'Select Version Type',
-                    arguments: []
-                }
-            )
-        ];
+        try {
+            if (fs.existsSync(packageJsonPath)) {
+                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                return packageJson.version || '0.0.1';
+            }
+        } catch (error) {
+            console.error('Error reading package.json:', error);
+        }
+        
+        return '0.0.1';
+    }
+
+    bumpVersion(version: string, type: VersionType): string {
+        const [major, minor, patch] = version.split('.').map(Number);
+        
+        switch (type) {
+            case 'major':
+                return `${major + 1}.0.0`;
+            case 'minor':
+                return `${major}.${minor + 1}.0`;
+            case 'patch':
+                return `${major}.${minor}.${patch + 1}`;
+            case 'custom':
+                return customVersion || version;
+            default:
+                return version;
+        }
     }
 }
 
@@ -95,12 +108,12 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Create and register the version selector provider
-    const versionSelectorProvider = new VersionSelectorProvider();
-    
-    // Register the tree data provider and create the view
+    // Create the version provider
+    const versionProvider = new VersionProvider();
+
+    // Register the tree data provider
     const treeView = vscode.window.createTreeView('scm-version-selector', {
-        treeDataProvider: versionSelectorProvider,
+        treeDataProvider: versionProvider,
         showCollapseAll: false
     });
     context.subscriptions.push(treeView);
@@ -108,21 +121,21 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the version selection command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.selectVersionType', async () => {
-            const currentVersion = getCurrentVersion();
+            const currentVersion = versionProvider.getCurrentVersion();
             const items: VersionQuickPickItem[] = [
                 new VersionQuickPickItem(
                     'Major',
-                    `${currentVersion} → ${bumpVersion(currentVersion, 'major')}`,
+                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'major')}`,
                     'major'
                 ),
                 new VersionQuickPickItem(
                     'Minor',
-                    `${currentVersion} → ${bumpVersion(currentVersion, 'minor')}`,
+                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'minor')}`,
                     'minor'
                 ),
                 new VersionQuickPickItem(
                     'Patch',
-                    `${currentVersion} → ${bumpVersion(currentVersion, 'patch')}`,
+                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'patch')}`,
                     'patch'
                 ),
                 new VersionQuickPickItem(
@@ -140,7 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (selected.type === 'custom') {
                     const input = await vscode.window.showInputBox({
                         prompt: "Enter custom version (e.g., 1.2.3)",
-                        value: currentVersion,
+                        value: versionProvider.getCurrentVersion(),
                         validateInput: (value) => {
                             return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
                         }
@@ -150,13 +163,13 @@ export function activate(context: vscode.ExtensionContext) {
                         currentVersionMode = 'custom';
                         customVersion = input;
                         nextVersion = input;
-                        versionSelectorProvider.refresh();
+                        versionProvider.refresh();
                         updateScmInputBox();
                     }
                 } else {
                     currentVersionMode = selected.type;
-                    nextVersion = bumpVersion(currentVersion, selected.type);
-                    versionSelectorProvider.refresh();
+                    nextVersion = versionProvider.bumpVersion(versionProvider.getCurrentVersion(), selected.type);
+                    versionProvider.refresh();
                     updateScmInputBox();
                 }
             }
@@ -178,8 +191,8 @@ export function activate(context: vscode.ExtensionContext) {
             if (git) {
                 const repo = git.repositories[0];
                 if (repo) {
-                    const currentVersion = getCurrentVersion();
-                    const nextVer = nextVersion || bumpVersion(currentVersion, currentVersionMode);
+                    const currentVersion = versionProvider.getCurrentVersion();
+                    const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
                     repo.inputBox.placeholder = `Commit message (Version: ${currentVersion} → ${nextVer})`;
                 }
             }
@@ -192,8 +205,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register the test button command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.testSourceControl', () => {
-            const versionSelectorProvider = new VersionSelectorProvider();
-            versionSelectorProvider.refresh();
+            versionProvider.refresh();
             vscode.window.showInformationMessage('Test button clicked - refreshing source control view!');
         })
     );
@@ -205,64 +217,6 @@ export function activate(context: vscode.ExtensionContext) {
     testButton.tooltip = 'Click to test version control view';
     testButton.show();
     context.subscriptions.push(testButton);
-}
-
-function getCurrentVersion(): string {
-    const versionFilePath = getVersionFilePath();
-    if (!versionFilePath) {
-        return '1.0.0';
-    }
-
-    if (fs.existsSync(versionFilePath)) {
-        if (path.basename(versionFilePath) === PACKAGE_JSON) {
-            const packageJson = JSON.parse(fs.readFileSync(versionFilePath, 'utf-8'));
-            return packageJson.version || '1.0.0';
-        }
-        return fs.readFileSync(versionFilePath, 'utf-8').trim() || '1.0.0';
-    }
-
-    return '1.0.0';
-}
-
-function getVersionFilePath(): string {
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    if (!rootPath) {
-        vscode.window.showErrorMessage("No workspace opened.");
-        return "";
-    }
-
-    let versionFile = config.get<string>('versionFile', 'VERSION');
-    const versionPath = path.join(rootPath, versionFile);
-    const packagePath = path.join(rootPath, 'package.json');
-
-    if (fs.existsSync(versionPath)) return versionPath;
-    if (fs.existsSync(packagePath)) return packagePath;
-
-    vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
-    return "";
-}
-
-function bumpVersion(version: string, type: 'patch' | 'minor' | 'major' | 'custom'): string {
-    if (type === 'custom' && customVersion) {
-        return customVersion;
-    }
-
-    const parts = version.split('.').map(Number);
-
-    if (type === 'major') {
-        parts[0] += 1;
-        parts[1] = 0;
-        parts[2] = 0;
-    } else if (type === 'minor') {
-        parts[1] += 1;
-        parts[2] = 0;
-    } else {
-        parts[2] += 1;
-    }
-
-    return parts.join('.');
 }
 
 async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custom') {
@@ -323,6 +277,64 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custo
         vscode.window.showErrorMessage(`Git operation failed: ${error}`);
         return;
     }
+}
+
+function getCurrentVersion(): string {
+    const versionFilePath = getVersionFilePath();
+    if (!versionFilePath) {
+        return '1.0.0';
+    }
+
+    if (fs.existsSync(versionFilePath)) {
+        if (path.basename(versionFilePath) === PACKAGE_JSON) {
+            const packageJson = JSON.parse(fs.readFileSync(versionFilePath, 'utf-8'));
+            return packageJson.version || '1.0.0';
+        }
+        return fs.readFileSync(versionFilePath, 'utf-8').trim() || '1.0.0';
+    }
+
+    return '1.0.0';
+}
+
+function getVersionFilePath(): string {
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    if (!rootPath) {
+        vscode.window.showErrorMessage("No workspace opened.");
+        return "";
+    }
+
+    let versionFile = config.get<string>('versionFile', 'VERSION');
+    const versionPath = path.join(rootPath, versionFile);
+    const packagePath = path.join(rootPath, 'package.json');
+
+    if (fs.existsSync(versionPath)) return versionPath;
+    if (fs.existsSync(packagePath)) return packagePath;
+
+    vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
+    return "";
+}
+
+function bumpVersion(version: string, type: 'patch' | 'minor' | 'major' | 'custom'): string {
+    if (type === 'custom' && customVersion) {
+        return customVersion;
+    }
+
+    const parts = version.split('.').map(Number);
+
+    if (type === 'major') {
+        parts[0] += 1;
+        parts[1] = 0;
+        parts[2] = 0;
+    } else if (type === 'minor') {
+        parts[1] += 1;
+        parts[2] = 0;
+    } else {
+        parts[2] += 1;
+    }
+
+    return parts.join('.');
 }
 
 async function createGitHubRelease(newVersion: string, rootPath: string) {

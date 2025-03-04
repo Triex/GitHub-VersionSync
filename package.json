@@ -15,7 +15,7 @@
     "url": "https://github.com/TriexDev/IDE-Easy-Commit"
   },
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "contributes": {
     "configuration": {
@@ -39,13 +39,13 @@
         "command": "extension.selectVersionType",
         "title": "Select Version Type",
         "icon": "$(versions)",
-        "category": "VersionSync"
+        "category": "Version Control"
       },
       {
         "command": "extension.openVersionSettings",
-        "title": "VersionSync Settings",
+        "title": "Version Settings",
         "icon": "$(gear)",
-        "category": "VersionSync"
+        "category": "Version Control"
       }
     ],
     "views": {
@@ -53,8 +53,7 @@
         {
           "id": "scm-version-selector",
           "name": "Version Control",
-          "when": "git.state == initialized",
-          "visibility": "visible"
+          "when": "git.state == initialized"
         }
       ]
     },
@@ -62,6 +61,17 @@
       "scm/title": [
         {
           "command": "extension.openVersionSettings",
+          "group": "navigation"
+        },
+        {
+          "command": "extension.selectVersionType",
+          "group": "1_version@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "extension.selectVersionType",
+          "when": "view == scm-version-selector",
           "group": "navigation"
         }
       ],
