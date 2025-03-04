@@ -4,6 +4,8 @@ Simplify version management and GitHub releases directly from VS Code. Automatic
 
 ![Version Control Panel](images/version-panel.png)
 
+---
+
 ## ✨ Features
 
 ### 🔄 Automatic Version Management
@@ -31,6 +33,8 @@ Simplify version management and GitHub releases directly from VS Code. Automatic
 - Easy-to-use release creation form
 - Quick access to settings
 
+---
+
 ## 🚀 Getting Started
 
 1. Install the extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=your-publisher.github-versionsync)
@@ -43,6 +47,8 @@ Simplify version management and GitHub releases directly from VS Code. Automatic
    - Open your repository in VS Code
    - Look for version control buttons in the Source Control panel
    - Click any version button to bump the version
+
+---
 
 ## 💡 Usage Tips
 
@@ -67,6 +73,8 @@ The release creation form provides:
 - Fully editable notes
 - Preview before publishing
 
+---
+
 ## ⚙️ Configuration
 
 Customize through VS Code settings:
@@ -87,12 +95,16 @@ Customize through VS Code settings:
 }
 ```
 
+---
+
 ## 📋 Requirements
 
 - VS Code 1.94.0 or higher
 - Git repository initialized
 - GitHub repository for releases
 - GitHub authentication for release creation
+
+---
 
 ## ❓ Troubleshooting
 
@@ -113,9 +125,13 @@ Common issues and solutions:
    - Verify Git is initialized
    - Ensure you have Git push permissions
 
+---
+
 ## 📝 Contributing
 
 Want to contribute? Great! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+---
 
 ## 📄 License
 
