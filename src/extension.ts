@@ -140,7 +140,7 @@ async function getGitHubToken(): Promise<string | undefined> {
     }
 }
 
-async function createGitHubRelease(version: string, message: string = '') {
+async function createGitHubRelease(version: string, message: string = '', title?: string) {
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
     const prefix = config.get('releasePrefix', 'v');
     
@@ -188,7 +188,7 @@ async function createGitHubRelease(version: string, message: string = '') {
             `https://api.github.com/repos/${repoFullName}/releases`,
             {
                 tag_name: tagName,
-                name: tagName,
+                name: title || tagName,
                 body: message || `Release ${tagName}`,
                 draft: false,
                 prerelease: false
@@ -202,7 +202,14 @@ async function createGitHubRelease(version: string, message: string = '') {
         );
 
         if (response.status === 201) {
-            vscode.window.showInformationMessage(`GitHub release ${tagName} created successfully!`);
+            const releaseUrl = response.data.html_url;
+            const action = await vscode.window.showInformationMessage(
+                `GitHub release ${tagName} created successfully!`,
+                'Open in Browser'
+            );
+            if (action === 'Open in Browser') {
+                vscode.env.openExternal(vscode.Uri.parse(releaseUrl));
+            }
         }
     } catch (error: any) {
         let errorMessage = 'Failed to create GitHub release';
@@ -213,6 +220,232 @@ async function createGitHubRelease(version: string, message: string = '') {
         }
         vscode.window.showErrorMessage(errorMessage);
         console.error('GitHub Release Error:', error);
+        throw error; // Re-throw for the progress indicator
+    }
+}
+
+class ReleaseWebviewProvider {
+    private static readonly viewType = 'github-versionsync.createRelease';
+    private readonly _extensionUri: vscode.Uri;
+    private _view?: vscode.WebviewPanel;
+
+    constructor(extensionUri: vscode.Uri) {
+        this._extensionUri = extensionUri;
+    }
+
+    async show() {
+        if (this._view) {
+            this._view.reveal(vscode.ViewColumn.One);
+            return;
+        }
+
+        const currentVersion = getCurrentVersion();
+        if (!currentVersion) {
+            vscode.window.showErrorMessage('Could not determine current version');
+            return;
+        }
+
+        this._view = vscode.window.createWebviewPanel(
+            ReleaseWebviewProvider.viewType,
+            'Create GitHub Release',
+            vscode.ViewColumn.One,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true
+            }
+        );
+
+        // Get commit history
+        const commitHistory = await this.getCommitHistory();
+        
+        this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
+
+        this._view.webview.onDidReceiveMessage(
+            async (message) => {
+                switch (message.command) {
+                    case 'createRelease':
+                        try {
+                            await vscode.window.withProgress({
+                                location: vscode.ProgressLocation.Notification,
+                                title: "Creating GitHub Release",
+                                cancellable: false
+                            }, async () => {
+                                await createGitHubRelease(currentVersion, message.notes, message.title);
+                            });
+                            this._view?.dispose();
+                        } catch (error) {
+                            vscode.window.showErrorMessage(`Failed to create release: ${error}`);
+                        }
+                        break;
+                    case 'cancel':
+                        this._view?.dispose();
+                        break;
+                }
+            },
+            undefined,
+            []
+        );
+
+        this._view.onDidDispose(() => {
+            this._view = undefined;
+        });
+    }
+
+    private getWebviewContent(version: string, commitHistory: string): string {
+        const defaultTitle = `Release ${version}`;
+        
+        return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Create GitHub Release</title>
+            <style>
+                body {
+                    padding: 20px;
+                    color: var(--vscode-editor-foreground);
+                    font-family: var(--vscode-font-family);
+                    background-color: var(--vscode-editor-background);
+                }
+                .form-group {
+                    margin-bottom: 15px;
+                }
+                label {
+                    display: block;
+                    margin-bottom: 5px;
+                    color: var(--vscode-input-foreground);
+                }
+                input, textarea {
+                    width: 100%;
+                    padding: 8px;
+                    border: 1px solid var(--vscode-input-border);
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    border-radius: 2px;
+                }
+                textarea {
+                    min-height: 400px;
+                    font-family: var(--vscode-editor-font-family);
+                    line-height: 1.5;
+                    tab-size: 2;
+                }
+                .button-container {
+                    margin-top: 20px;
+                    display: flex;
+                    gap: 10px;
+                    justify-content: flex-end;
+                }
+                button {
+                    padding: 8px 16px;
+                    border: none;
+                    color: var(--vscode-button-foreground);
+                    background-color: var(--vscode-button-background);
+                    cursor: pointer;
+                }
+                button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+                button.secondary {
+                    background-color: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                }
+                button.secondary:hover {
+                    background-color: var(--vscode-button-secondaryHoverBackground);
+                }
+                .toolbar {
+                    margin-bottom: 10px;
+                    display: flex;
+                    gap: 10px;
+                }
+                .toolbar button {
+                    font-size: 12px;
+                    padding: 4px 8px;
+                }
+            </style>
+        </head>
+        <body>
+            <form id="releaseForm">
+                <div class="form-group">
+                    <label for="title">Release Title</label>
+                    <input type="text" id="title" value="${defaultTitle}" required>
+                </div>
+                <div class="form-group">
+                    <label for="notes">Release Notes</label>
+                    <div class="toolbar">
+                        <button type="button" id="resetNotes" class="secondary">Reset to Commit History</button>
+                        <button type="button" id="clearNotes" class="secondary">Clear</button>
+                    </div>
+                    <textarea id="notes" placeholder="Enter release notes...">${commitHistory}</textarea>
+                </div>
+                <div class="button-container">
+                    <button type="button" class="secondary" id="cancel">Cancel</button>
+                    <button type="submit">Create Release</button>
+                </div>
+            </form>
+            <script>
+                const vscode = acquireVsCodeApi();
+                const commitHistory = ${JSON.stringify(commitHistory)};
+                
+                document.getElementById('releaseForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    vscode.postMessage({
+                        command: 'createRelease',
+                        title: document.getElementById('title').value,
+                        notes: document.getElementById('notes').value
+                    });
+                });
+
+                document.getElementById('cancel').addEventListener('click', () => {
+                    vscode.postMessage({ command: 'cancel' });
+                });
+
+                document.getElementById('resetNotes').addEventListener('click', () => {
+                    document.getElementById('notes').value = commitHistory;
+                });
+
+                document.getElementById('clearNotes').addEventListener('click', () => {
+                    document.getElementById('notes').value = '';
+                });
+            </script>
+        </body>
+        </html>`;
+    }
+
+    private async getCommitHistory(): Promise<string> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            return '';
+        }
+
+        try {
+            // Try to get the last tag
+            let lastTag = '';
+            try {
+                lastTag = await execAsync('git describe --tags --abbrev=0', { 
+                    cwd: workspaceFolders[0].uri.fsPath 
+                }) as string;
+            } catch {
+                // No tags exist, will get all commits
+            }
+
+            // Get commit history with more details
+            const gitLogCommand = lastTag
+                ? `git log ${lastTag.trim()}..HEAD --pretty=format:"### %s%n%n**Author:** %an%n**Date:** %ci%n**Commit:** %H%n%n%b%n"`
+                : 'git log --pretty=format:"### %s%n%n**Author:** %an%n**Date:** %ci%n**Commit:** %H%n%n%b%n"';
+
+            const commitLog = await execAsync(gitLogCommand, { 
+                cwd: workspaceFolders[0].uri.fsPath 
+            }) as string;
+
+            if (!commitLog) {
+                return '### No new commits since last release.';
+            }
+
+            return `# Changelog\n\n${commitLog.trim()}`;
+        } catch (error) {
+            console.error('Error getting commit history:', error);
+            return '### Failed to get commit history';
+        }
     }
 }
 
@@ -375,42 +608,37 @@ export function activate(context: vscode.ExtensionContext) {
     testButton.show();
     context.subscriptions.push(testButton);
 
+    const releaseWebviewProvider = new ReleaseWebviewProvider(context.extensionUri);
+
     // Register create one-off release command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.createOneOffRelease', async () => {
-            const currentVersion = getCurrentVersion();
-            if (!currentVersion) {
-                vscode.window.showErrorMessage('No version found in package.json');
-                return;
-            }
-
-            // Try to get GitHub token
-            const token = await getGitHubToken();
-            if (!token) {
-                const action = await vscode.window.showInformationMessage(
-                    'GitHub authentication required for creating releases.',
-                    'Sign in to GitHub'
-                );
-                
-                if (action === 'Sign in to GitHub') {
-                    const newToken = await getGitHubToken();
-                    if (!newToken) {
-                        vscode.window.showErrorMessage('GitHub authentication failed.');
+            try {
+                // Try to get GitHub token first
+                const token = await getGitHubToken();
+                if (!token) {
+                    const action = await vscode.window.showInformationMessage(
+                        'GitHub authentication required for creating releases.',
+                        'Sign in to GitHub'
+                    );
+                    
+                    if (action === 'Sign in to GitHub') {
+                        const newToken = await getGitHubToken();
+                        if (!newToken) {
+                            vscode.window.showErrorMessage('GitHub authentication failed.');
+                            return;
+                        }
+                    } else {
                         return;
                     }
-                } else {
-                    return;
                 }
+
+                // Show the webview
+                await releaseWebviewProvider.show();
+            } catch (error) {
+                console.error('Create Release Error:', error);
+                vscode.window.showErrorMessage(`Failed to create release: ${error}`);
             }
-
-            // Get release notes from user
-            const releaseNotes = await vscode.window.showInputBox({
-                prompt: 'Enter release notes (optional)',
-                placeHolder: 'Description of this release...'
-            });
-
-            // Create the release
-            await createGitHubRelease(currentVersion, releaseNotes || undefined);
         })
     );
 
@@ -517,32 +745,35 @@ async function updateVersionAndCommit(type: VersionType) {
 }
 
 function getCurrentVersion(): string {
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    if (!rootPath) {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
         vscode.window.showErrorMessage("No workspace opened.");
         return "";
     }
 
-    let versionFile = config.get<string>('versionFile', 'VERSION');
-    const versionPath = path.join(rootPath, versionFile);
-    const packagePath = path.join(rootPath, 'package.json');
+    const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    const versionFilePath = path.join(workspaceFolders[0].uri.fsPath, config.get('versionFile', ''));
 
-    if (fs.existsSync(versionPath)) {
-        if (path.basename(versionPath) === PACKAGE_JSON) {
-            const packageJson = JSON.parse(fs.readFileSync(versionPath, 'utf-8'));
+    try {
+        // First try VERSION file if configured
+        if (config.get('versionFile', '') && fs.existsSync(versionFilePath)) {
+            return fs.readFileSync(versionFilePath, 'utf-8').trim();
+        }
+
+        // Then try package.json
+        if (fs.existsSync(packageJsonPath)) {
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
             return packageJson.version || '1.0.0';
         }
-        return fs.readFileSync(versionPath, 'utf-8').trim() || '1.0.0';
-    }
-    if (fs.existsSync(packagePath)) {
-        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-        return packageJson.version || '1.0.0';
-    }
 
-    vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
-    return "";
+        vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
+        return "";
+    } catch (error) {
+        console.error('Error reading version:', error);
+        vscode.window.showErrorMessage(`Failed to read version: ${error}`);
+        return "";
+    }
 }
 
 function getVersionFilePath(): string {
