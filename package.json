@@ -57,24 +57,50 @@
           "group": "navigation"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "extension.versionCommitPatch",
+        "title": "Patch Version Commit"
+      },
+      {
+        "command": "extension.versionCommitMinor",
+        "title": "Minor Version Commit"
+      },
+      {
+        "command": "extension.versionCommitMajor",
+        "title": "Major Version Commit"
+      },
+      {
+        "command": "extension.customVersion",
+        "title": "Set Custom Version"
+      },
+      {
+        "command": "extension.toggleGitHubRelease",
+        "title": "Toggle GitHub Release"
+      }
+    ]
   },
   "commands": [
     {
       "command": "extension.versionCommitPatch",
-      "title": "Patch Commit (Auto Version)"
+      "title": "Patch Version Commit"
     },
     {
       "command": "extension.versionCommitMinor",
-      "title": "Minor Commit (Auto Version)"
+      "title": "Minor Version Commit"
     },
     {
       "command": "extension.versionCommitMajor",
-      "title": "Major Commit (Auto Version)"
+      "title": "Major Version Commit"
+    },
+    {
+      "command": "extension.customVersion",
+      "title": "Set Custom Version"
     },
     {
       "command": "extension.toggleGitHubRelease",
-      "title": "Enable GitHub Release (✔/✖)"
+      "title": "Toggle GitHub Release"
     }
   ],
   "main": "./out/extension.js",

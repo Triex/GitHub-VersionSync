@@ -4,22 +4,92 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-// const VERSION_FILE = 'VERSION';
 const PACKAGE_JSON = 'package.json';
-let enableGitHubRelease = false; // Toggle flag
-let enableAutoTag = true; // Default to true for auto-tagging
-// // FIXME: Get version file path automatically from config
-// const versionFilePath = getVersionFilePath();
-// if (!versionFilePath) return;
+let enableGitHubRelease = false;
+let enableAutoTag = true;
+let versionStatusBarItem: vscode.StatusBarItem;
+let currentVersionMode: 'major' | 'minor' | 'patch' | 'custom' = 'patch';
+let customVersion: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+    // Create status bar item
+    versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    versionStatusBarItem.command = 'extension.customVersion';
+    context.subscriptions.push(versionStatusBarItem);
+    updateVersionDisplay();
+
     context.subscriptions.push(
-        vscode.commands.registerCommand('extension.versionCommitPatch', () => updateVersionAndCommit('patch')),
-        vscode.commands.registerCommand('extension.versionCommitMinor', () => updateVersionAndCommit('minor')),
-        vscode.commands.registerCommand('extension.versionCommitMajor', () => updateVersionAndCommit('major')),
+        vscode.commands.registerCommand('extension.versionCommitPatch', () => {
+            currentVersionMode = 'patch';
+            updateVersionDisplay();
+            updateVersionAndCommit('patch');
+        }),
+        vscode.commands.registerCommand('extension.versionCommitMinor', () => {
+            currentVersionMode = 'minor';
+            updateVersionDisplay();
+            updateVersionAndCommit('minor');
+        }),
+        vscode.commands.registerCommand('extension.versionCommitMajor', () => {
+            currentVersionMode = 'major';
+            updateVersionDisplay();
+            updateVersionAndCommit('major');
+        }),
+        vscode.commands.registerCommand('extension.customVersion', async () => {
+            const currentVersion = getCurrentVersion();
+            const input = await vscode.window.showInputBox({
+                prompt: "Enter custom version (e.g., 1.2.3)",
+                value: customVersion || currentVersion,
+                validateInput: (value) => {
+                    return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
+                }
+            });
+
+            if (input) {
+                currentVersionMode = 'custom';
+                customVersion = input;
+                updateVersionDisplay();
+                updateVersionAndCommit('custom');
+            }
+        }),
         vscode.commands.registerCommand('extension.toggleGitHubRelease', toggleGitHubRelease),
         vscode.commands.registerCommand('extension.toggleAutoTag', toggleAutoTag)
     );
+}
+
+function updateVersionDisplay() {
+    const currentVersion = getCurrentVersion();
+    if (!currentVersion) {
+        versionStatusBarItem.hide();
+        return;
+    }
+
+    let nextVersion: string;
+    if (currentVersionMode === 'custom') {
+        nextVersion = customVersion || currentVersion;
+    } else {
+        nextVersion = bumpVersion(currentVersion, currentVersionMode);
+    }
+
+    versionStatusBarItem.text = `$(versions) ${nextVersion}`;
+    versionStatusBarItem.tooltip = `Click to enter custom version\nCurrent: ${currentVersion}\nNext: ${nextVersion} (${currentVersionMode})`;
+    versionStatusBarItem.show();
+}
+
+function getCurrentVersion(): string {
+    const versionFilePath = getVersionFilePath();
+    if (!versionFilePath) {
+        return '1.0.0';
+    }
+
+    if (fs.existsSync(versionFilePath)) {
+        if (path.basename(versionFilePath) === PACKAGE_JSON) {
+            const packageJson = JSON.parse(fs.readFileSync(versionFilePath, 'utf-8'));
+            return packageJson.version || '1.0.0';
+        }
+        return fs.readFileSync(versionFilePath, 'utf-8').trim() || '1.0.0';
+    }
+
+    return '1.0.0';
 }
 
 function toggleGitHubRelease() {
@@ -52,7 +122,7 @@ function getVersionFilePath(): string {
     return "";
 }
 
-async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
+async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custom') {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage("No workspace opened.");
@@ -65,42 +135,31 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
         return;
     }
 
-    // Read current version from VERSION file if it exists, otherwise from package.json
-    let currentVersion = '1.0.0';
-    if (fs.existsSync(versionFilePath)) {
-        currentVersion = fs.readFileSync(versionFilePath, 'utf-8').trim() || '1.0.0';
-    } else if (fs.existsSync(path.join(rootPath, PACKAGE_JSON))) {
-        const packageJson = JSON.parse(fs.readFileSync(path.join(rootPath, PACKAGE_JSON), 'utf-8'));
-        currentVersion = packageJson.version || '1.0.0';
-    }
-
-    const newVersion = bumpVersion(currentVersion, type);
+    const currentVersion = getCurrentVersion();
+    const newVersion = type === 'custom' ? (customVersion || currentVersion) : bumpVersion(currentVersion, type);
 
     // Update VERSION file if it exists
     if (fs.existsSync(versionFilePath)) {
-        fs.writeFileSync(versionFilePath, newVersion);
-    }
-
-    // Update package.json if it exists
-    const packagePath = path.join(rootPath, PACKAGE_JSON);
-    if (fs.existsSync(packagePath)) {
-        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-        packageJson.version = newVersion;
-        fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 4));
+        if (path.basename(versionFilePath) === PACKAGE_JSON) {
+            const packageJson = JSON.parse(fs.readFileSync(versionFilePath, 'utf-8'));
+            packageJson.version = newVersion;
+            fs.writeFileSync(versionFilePath, JSON.stringify(packageJson, null, 4));
+        } else {
+            fs.writeFileSync(versionFilePath, newVersion);
+        }
     }
 
     vscode.window.showInformationMessage(`Updated version to ${newVersion}`);
+    updateVersionDisplay();
 
     try {
         const filesToCommit: string[] = [];
         if (fs.existsSync(versionFilePath)) filesToCommit.push(versionFilePath);
-        if (fs.existsSync(packagePath)) filesToCommit.push(PACKAGE_JSON);
 
         if (filesToCommit.length > 0) {
             cp.execSync(`git add ${filesToCommit.join(' ')}`, { cwd: rootPath });
             cp.execSync(`git commit -m "Bump ${type} version to ${newVersion}"`, { cwd: rootPath });
         }
-
 
         // After successful commit, create tag if auto-tagging is enabled
         if (enableAutoTag) {
@@ -115,12 +174,6 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
             }
         }
 
-        // if (enableAutoTag) {
-        //     cp.execSync(`git tag -a v${newVersion} -m "Version ${newVersion}"`, { cwd: rootPath });
-        //     cp.execSync('git push --tags', { cwd: rootPath });
-        //     vscode.window.showInformationMessage(`Created and pushed tag v${newVersion}`);
-        // }
-
         if (enableGitHubRelease) {
             await createGitHubRelease(newVersion, rootPath);
         }
@@ -132,7 +185,7 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
 
 function bumpVersion(version: string, type: 'patch' | 'minor' | 'major'): string {
     const parts = version.split('.').map(Number);
-    
+
     if (type === 'major') {
         parts[0] += 1;
         parts[1] = 0;
