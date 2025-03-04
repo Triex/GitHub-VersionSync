@@ -171,7 +171,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Register settings command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.openVersionSettings', () => {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'version');
+            vscode.commands.executeCommand('workbench.action.openSettings', '@ext:TriexDev.github-versionsync');
         })
     );
 
