@@ -8,6 +8,7 @@ A VS Code extension that simplifies version management and GitHub releases. It a
 - **Dual Version Tracking**: Maintains versions in both `VERSION` file and `package.json` (if present)
 - **Auto-tagging**: Automatically creates and pushes git tags for version commits
 - **GitHub Release Integration**: Optional automatic creation of GitHub releases
+   - Automatically includes commit messages from the last tag (or all commits if no previous tag exists)
 - **Configurable Settings**: Customize behavior through VS Code settings
 
 ## Installation
@@ -40,14 +41,14 @@ To build and run the extension locally:
 1. Clone the repository
 2. Install dependencies:
    ```bash
-   pnpm install
+   bun install
    ```
 3. Build the extension:
    ```bash
-   pnpm run build
+   bun run build
    ```
 4. Press F5 in VS Code to launch the extension in debug mode
 
 ## License
 
-MIT License - see LICENSE file for details
+No License - see LICENSE file for details
