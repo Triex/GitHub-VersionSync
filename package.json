@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "publisher": "TriexDev",
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.94.0"
   },
   "categories": [
     "Source Control"
@@ -18,6 +18,32 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "commands": [
+      {
+        "command": "extension.selectVersionType",
+        "title": "Select Version Type",
+        "icon": "$(versions)",
+        "category": "Version Control"
+      },
+      {
+        "command": "extension.openVersionSettings",
+        "title": "Version Settings",
+        "icon": "$(gear)",
+        "category": "Version Control"
+      },
+      {
+        "command": "extension.toggleGitHubRelease",
+        "title": "Toggle GitHub Releases",
+        "icon": "$(github)",
+        "category": "Version Control"
+      },
+      {
+        "command": "extension.createOneOffRelease",
+        "title": "Create GitHub Release",
+        "icon": "$(github)",
+        "category": "Version Control"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "GitHub Version Sync",
@@ -41,29 +67,19 @@
           "type": "string",
           "default": "v",
           "description": "Prefix to use for release tags (e.g., 'v' for v1.0.0)"
+        },
+        "github-versionsync.releaseOn": {
+          "type": "array",
+          "default": ["major", "minor", "patch"],
+          "items": {
+            "type": "string",
+            "enum": ["major", "minor", "patch"]
+          },
+          "uniqueItems": true,
+          "description": "When to create GitHub releases (select one or more)"
         }
       }
     },
-    "commands": [
-      {
-        "command": "extension.selectVersionType",
-        "title": "Select Version Type",
-        "icon": "$(versions)",
-        "category": "Version Control"
-      },
-      {
-        "command": "extension.openVersionSettings",
-        "title": "Version Settings",
-        "icon": "$(gear)",
-        "category": "Version Control"
-      },
-      {
-        "command": "extension.toggleGitHubRelease",
-        "title": "Toggle GitHub Releases",
-        "icon": "$(github)",
-        "category": "Version Control"
-      }
-    ],
     "views": {
       "scm": [
         {

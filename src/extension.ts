@@ -33,7 +33,7 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         return element;
     }
 
-    getChildren(): vscode.TreeItem[] {
+    async getChildren(): Promise<vscode.TreeItem[]> {
         const currentVersion = this.getCurrentVersion();
         const nextVer = nextVersion || this.bumpVersion(currentVersion, currentVersionMode);
 
@@ -49,29 +49,42 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 
         const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
         const releaseEnabled = config.get('enableGitHubRelease', false);
-        const githubToken = config.get('githubToken', '');
+        const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
+        
+        // Check GitHub authentication status
+        const token = await getGitHubToken();
 
-        const githubItem = new vscode.TreeItem('GitHub Releases', vscode.TreeItemCollapsibleState.None);
+        // Create GitHub Release item
+        const githubItem = new vscode.TreeItem('Create GitHub Release', vscode.TreeItemCollapsibleState.None);
         githubItem.iconPath = new vscode.ThemeIcon('github');
         githubItem.command = {
-            command: 'extension.toggleGitHubRelease',
-            title: 'Toggle GitHub Releases'
+            command: 'extension.createOneOffRelease',
+            title: 'Create GitHub Release'
         };
 
-        if (releaseEnabled) {
-            if (!githubToken) {
-                githubItem.description = '⚠️ Token Required';
-                githubItem.tooltip = 'GitHub token is required. Click to configure.';
-            } else {
-                githubItem.description = '✓ Enabled';
-                githubItem.tooltip = 'GitHub releases are enabled. Click to disable.';
-            }
+        // Create Auto-Release Settings item
+        const autoReleaseItem = new vscode.TreeItem('Auto-Release Settings', vscode.TreeItemCollapsibleState.None);
+        autoReleaseItem.command = {
+            command: 'extension.toggleGitHubRelease',
+            title: 'Toggle Automatic GitHub Releases'
+        };
+
+        if (!token) {
+            githubItem.description = '⚠️ Sign in Required';
+            githubItem.tooltip = 'Click to sign in to GitHub';
+            autoReleaseItem.description = '⚠️ Sign in Required';
         } else {
-            githubItem.description = 'Disabled';
-            githubItem.tooltip = 'GitHub releases are disabled. Click to enable.';
+            githubItem.tooltip = 'Create a GitHub release for the current version';
+            if (releaseEnabled) {
+                autoReleaseItem.description = `Auto: ${releaseOn.join('/')}`;
+                autoReleaseItem.tooltip = `Automatic releases enabled for ${releaseOn.join('/')} versions`;
+            } else {
+                autoReleaseItem.description = 'Auto: Off';
+                autoReleaseItem.tooltip = 'Automatic releases are disabled';
+            }
         }
 
-        return [currentItem, nextItem, githubItem];
+        return [currentItem, nextItem, githubItem, autoReleaseItem];
     }
 
     getCurrentVersion(): string {
@@ -113,6 +126,93 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
             default:
                 return version;
         }
+    }
+}
+
+async function getGitHubToken(): Promise<string | undefined> {
+    try {
+        // Try to get the session
+        const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
+        return session?.accessToken;
+    } catch (error) {
+        console.error('GitHub Authentication Error:', error);
+        return undefined;
+    }
+}
+
+async function createGitHubRelease(version: string, message: string = '') {
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    const prefix = config.get('releasePrefix', 'v');
+    
+    // Get token from VS Code's GitHub authentication
+    const token = await getGitHubToken();
+    
+    if (!token) {
+        const action = await vscode.window.showErrorMessage(
+            'GitHub authentication required for creating releases.',
+            'Sign in to GitHub'
+        );
+        
+        if (action === 'Sign in to GitHub') {
+            // Try to get the token again, this time forcing the login prompt
+            const newToken = await getGitHubToken();
+            if (!newToken) {
+                vscode.window.showErrorMessage('GitHub authentication failed.');
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    try {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            throw new Error('No workspace opened');
+        }
+
+        // Get repository info from git config
+        const gitConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.git', 'config');
+        const gitConfig = fs.readFileSync(gitConfigPath, 'utf8');
+        const repoUrlMatch = gitConfig.match(/url = .*github\.com[:/](.+\/.+)\.git/);
+        
+        if (!repoUrlMatch) {
+            throw new Error('Could not find GitHub repository URL in git config');
+        }
+
+        const repoFullName = repoUrlMatch[1].replace(':', '/');
+        const tagName = `${prefix}${version}`;
+        
+        // Create release using GitHub API
+        const response = await axios.post(
+            `https://api.github.com/repos/${repoFullName}/releases`,
+            {
+                tag_name: tagName,
+                name: tagName,
+                body: message || `Release ${tagName}`,
+                draft: false,
+                prerelease: false
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            }
+        );
+
+        if (response.status === 201) {
+            vscode.window.showInformationMessage(`GitHub release ${tagName} created successfully!`);
+        }
+    } catch (error: any) {
+        let errorMessage = 'Failed to create GitHub release';
+        if (error.response?.data?.message) {
+            errorMessage += `: ${error.response.data.message}`;
+        } else if (error.message) {
+            errorMessage += `: ${error.message}`;
+        }
+        vscode.window.showErrorMessage(errorMessage);
+        console.error('GitHub Release Error:', error);
     }
 }
 
@@ -275,6 +375,45 @@ export function activate(context: vscode.ExtensionContext) {
     testButton.show();
     context.subscriptions.push(testButton);
 
+    // Register create one-off release command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.createOneOffRelease', async () => {
+            const currentVersion = getCurrentVersion();
+            if (!currentVersion) {
+                vscode.window.showErrorMessage('No version found in package.json');
+                return;
+            }
+
+            // Try to get GitHub token
+            const token = await getGitHubToken();
+            if (!token) {
+                const action = await vscode.window.showInformationMessage(
+                    'GitHub authentication required for creating releases.',
+                    'Sign in to GitHub'
+                );
+                
+                if (action === 'Sign in to GitHub') {
+                    const newToken = await getGitHubToken();
+                    if (!newToken) {
+                        vscode.window.showErrorMessage('GitHub authentication failed.');
+                        return;
+                    }
+                } else {
+                    return;
+                }
+            }
+
+            // Get release notes from user
+            const releaseNotes = await vscode.window.showInputBox({
+                prompt: 'Enter release notes (optional)',
+                placeHolder: 'Description of this release...'
+            });
+
+            // Create the release
+            await createGitHubRelease(currentVersion, releaseNotes || undefined);
+        })
+    );
+
     // Register GitHub release toggle command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.toggleGitHubRelease', async () => {
@@ -282,21 +421,22 @@ export function activate(context: vscode.ExtensionContext) {
             const currentEnabled = config.get('enableGitHubRelease', false);
             
             if (!currentEnabled) {
-                const token = config.get('githubToken', '');
+                // Try to get GitHub token
+                const token = await getGitHubToken();
                 if (!token) {
-                    const input = await vscode.window.showInputBox({
-                        prompt: 'Enter your GitHub Personal Access Token',
-                        password: true,
-                        placeHolder: 'ghp_...',
-                        validateInput: (value) => {
-                            return value && value.length > 0 ? null : 'Token is required for GitHub releases';
+                    const action = await vscode.window.showInformationMessage(
+                        'GitHub authentication required for automatic releases.',
+                        'Sign in to GitHub'
+                    );
+                    
+                    if (action === 'Sign in to GitHub') {
+                        const newToken = await getGitHubToken();
+                        if (!newToken) {
+                            vscode.window.showErrorMessage('GitHub authentication failed.');
+                            return;
                         }
-                    });
-
-                    if (input) {
-                        await config.update('githubToken', input, vscode.ConfigurationTarget.Global);
                     } else {
-                        return; // User cancelled
+                        return;
                     }
                 }
             }
@@ -305,6 +445,8 @@ export function activate(context: vscode.ExtensionContext) {
             versionProvider.refresh();
         })
     );
+
+    // ... rest of activate function ...
 }
 
 async function updateVersionAndCommit(type: VersionType) {
@@ -358,9 +500,12 @@ async function updateVersionAndCommit(type: VersionType) {
                 await execAsync('git push --tags', { cwd: workspaceFolders[0].uri.fsPath });
             }
 
-            // Create GitHub release if enabled
+            // Create GitHub release if automatic releases are enabled and version type matches setting
             if (config.get('enableGitHubRelease', false)) {
-                await createGitHubRelease(newVersion, message);
+                const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
+                if (['major', 'minor', 'patch'].includes(type) && releaseOn.includes(type)) {
+                    await createGitHubRelease(newVersion, message);
+                }
             }
 
             vscode.window.showInformationMessage(`Version updated to ${newVersion}`);
@@ -436,67 +581,6 @@ function bumpVersion(version: string, type: 'major' | 'minor' | 'patch' | 'none'
     }
 
     return version;
-}
-
-async function createGitHubRelease(version: string, message: string = '') {
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const token = config.get('githubToken', '');
-    const prefix = config.get('releasePrefix', 'v');
-    
-    if (!token) {
-        vscode.window.showErrorMessage('GitHub token is required for creating releases. Please configure it in settings.');
-        return;
-    }
-
-    try {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            throw new Error('No workspace opened');
-        }
-
-        // Get repository info from git config
-        const gitConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.git', 'config');
-        const gitConfig = fs.readFileSync(gitConfigPath, 'utf8');
-        const repoUrlMatch = gitConfig.match(/url = .*github\.com[:/](.+\/.+)\.git/);
-        
-        if (!repoUrlMatch) {
-            throw new Error('Could not find GitHub repository URL in git config');
-        }
-
-        const repoFullName = repoUrlMatch[1].replace(':', '/');
-        const tagName = `${prefix}${version}`;
-        
-        // Create release using GitHub API
-        const response = await axios.post(
-            `https://api.github.com/repos/${repoFullName}/releases`,
-            {
-                tag_name: tagName,
-                name: tagName,
-                body: message || `Release ${tagName}`,
-                draft: false,
-                prerelease: false
-            },
-            {
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'Accept': 'application/vnd.github.v3+json'
-                }
-            }
-        );
-
-        if (response.status === 201) {
-            vscode.window.showInformationMessage(`GitHub release ${tagName} created successfully!`);
-        }
-    } catch (error: any) {
-        let errorMessage = 'Failed to create GitHub release';
-        if (error.response?.data?.message) {
-            errorMessage += `: ${error.response.data.message}`;
-        } else if (error.message) {
-            errorMessage += `: ${error.message}`;
-        }
-        vscode.window.showErrorMessage(errorMessage);
-        console.error('GitHub Release Error:', error);
-    }
 }
 
 async function execAsync(command: string, options: cp.ExecOptions) {
