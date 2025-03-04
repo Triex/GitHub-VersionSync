@@ -4,21 +4,29 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-const VERSION_FILE = 'package.json';
+const VERSION_FILE = 'VERSION';
+const PACKAGE_JSON = 'package.json';
 let enableGitHubRelease = false; // Toggle flag
+let enableAutoTag = true; // Default to true for auto-tagging
 
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.versionCommitPatch', () => updateVersionAndCommit('patch')),
         vscode.commands.registerCommand('extension.versionCommitMinor', () => updateVersionAndCommit('minor')),
         vscode.commands.registerCommand('extension.versionCommitMajor', () => updateVersionAndCommit('major')),
-        vscode.commands.registerCommand('extension.toggleGitHubRelease', toggleGitHubRelease)
+        vscode.commands.registerCommand('extension.toggleGitHubRelease', toggleGitHubRelease),
+        vscode.commands.registerCommand('extension.toggleAutoTag', toggleAutoTag)
     );
 }
 
 function toggleGitHubRelease() {
     enableGitHubRelease = !enableGitHubRelease;
     vscode.window.showInformationMessage(`GitHub Release: ${enableGitHubRelease ? "Enabled" : "Disabled"}`);
+}
+
+function toggleAutoTag() {
+    enableAutoTag = !enableAutoTag;
+    vscode.window.showInformationMessage(`Auto-tagging: ${enableAutoTag ? "Enabled" : "Disabled"}`);
 }
 
 async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
@@ -28,23 +36,46 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
         return;
     }
 
-    const packagePath = path.join(workspaceFolders[0].uri.fsPath, VERSION_FILE);
-    if (!fs.existsSync(packagePath)) {
-        vscode.window.showErrorMessage(`${VERSION_FILE} not found in the workspace.`);
-        return;
+    const rootPath = workspaceFolders[0].uri.fsPath;
+    const versionPath = path.join(rootPath, VERSION_FILE);
+    const packagePath = path.join(rootPath, PACKAGE_JSON);
+    
+    // Read current version from VERSION file if it exists, otherwise from package.json
+    let currentVersion = '1.0.0';
+    if (fs.existsSync(versionPath)) {
+        currentVersion = fs.readFileSync(versionPath, 'utf-8').trim();
+    } else if (fs.existsSync(packagePath)) {
+        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+        currentVersion = packageJson.version || '1.0.0';
     }
 
-    const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
-    const oldVersion = packageJson.version || '1.0.0';
-    const newVersion = bumpVersion(oldVersion, type);
+    const newVersion = bumpVersion(currentVersion, type);
 
-    packageJson.version = newVersion;
-    fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
+    // Update VERSION file
+    fs.writeFileSync(versionPath, newVersion);
+
+    // Update package.json if it exists
+    if (fs.existsSync(packagePath)) {
+        const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+        packageJson.version = newVersion;
+        fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 4));
+    }
 
     vscode.window.showInformationMessage(`Updated version to ${newVersion}`);
 
-    cp.execSync(`git add ${VERSION_FILE}`);
+    cp.execSync(`git add ${VERSION_FILE} ${PACKAGE_JSON}`);
     cp.execSync(`git commit -m "Bump ${type} version to ${newVersion}"`);
+
+    // After successful commit, create tag if auto-tagging is enabled
+    if (enableAutoTag) {
+        try {
+            cp.execSync(`git tag -a v${newVersion} -m "Version ${newVersion}"`, { cwd: rootPath });
+            cp.execSync('git push --tags', { cwd: rootPath });
+            vscode.window.showInformationMessage(`Created and pushed tag v${newVersion}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to create/push tag: ${error}`);
+        }
+    }
 
     if (enableGitHubRelease) {
         await createGitHubRelease(newVersion);
