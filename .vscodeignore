@@ -6,3 +6,4 @@ src/**
 bun.lockb
 **/*.map
 **/*.ts
+!images/*.png

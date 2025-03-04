@@ -4,6 +4,7 @@
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
   "version": "0.0.1",
   "publisher": "TriexDev",
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.94.0"
   },
@@ -184,5 +185,7 @@
   },
   "dependencies": {
     "axios": "^1.8.1"
-  }
+  },
+  "markdown": "github",
+  "qna": "marketplace"
 }
