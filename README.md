@@ -101,9 +101,42 @@ Customize through VS Code settings:
   "github-versionsync.versionFile": "VERSION",
 
   // Customize release tag prefix (default: "v")
-  "github-versionsync.releasePrefix": "v"
+  "github-versionsync.releasePrefix": "v",
+
+  // Commands to run before creating a release
+  "github-versionsync.preReleaseCommands": [
+    "npm run build",
+    "vsce package"
+  ],
+
+  // Files to include in the release (supports glob patterns)
+  "github-versionsync.includePackageFiles": ["*.vsix"]
 }
 ```
+
+### Release Automation
+
+The extension supports automated release workflows through the `preReleaseCommands` and `includePackageFiles` settings:
+
+1. **Pre-Release Commands**: Run build, test, or packaging commands before creating a release:
+   ```jsonc
+   "github-versionsync.preReleaseCommands": [
+     "npm run build",      // Build your project
+     "npm test",          // Run tests
+     "vsce package"       // Package VS Code extension
+   ]
+   ```
+   Commands run in sequence and must all succeed for the release to proceed.
+
+2. **Release Assets**: Automatically include build artifacts in your release:
+   ```jsonc
+   "github-versionsync.includePackageFiles": [
+     "*.vsix",           // Include VS Code extension packages
+     "dist/*.zip",       // Include distribution archives
+     "build/*.jar"       // Include built JAR files
+   ]
+   ```
+   Supports glob patterns for flexible file matching.
 
 ---
 
