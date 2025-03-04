@@ -14,6 +14,26 @@
         "onStartupFinished"
     ],
     "contributes": {
+        "configuration": {
+            "title": "GitHub Version Sync",
+            "properties": {
+                "githubVersionSync.enableAutoTag": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically create and push git tags when committing version changes"
+                },
+                "githubVersionSync.enableGitHubRelease": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically create GitHub releases when committing version changes"
+                },
+                "githubVersionSync.versionFile": {
+                    "type": "string",
+                    "default": "VERSION",
+                    "description": "Name of the version file to use (relative to workspace root)"
+                }
+            }
+        },
         "menus": {
             "scm/title": [
                 {
