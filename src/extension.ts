@@ -1,6 +1,6 @@
-import axios from 'axios';
 import * as cp from 'child_process';
 import * as fs from 'fs';
+import { Octokit } from 'octokit';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
@@ -9,9 +9,28 @@ const PACKAGE_JSON = 'package.json';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
 type VersionType = 'major' | 'minor' | 'patch' | 'custom' | 'none';
-let currentVersionMode: VersionType = 'patch';
+let currentVersionMode: VersionType = 'patch';  // Keep patch as default for version bumping
 let nextVersion: string = '';
 let customVersion: string | undefined;
+let isCreatingRelease = false;  // Add flag to prevent recursive releases
+let isUpdatingVersion = false;  // Add flag to prevent recursive version updates
+let shouldUpdateVersion = false; // Flag to control version updates during commit
+let lastCalculatedVersion: string | undefined;  // Track last calculated version
+let isRefreshing = false;
+let versionStatusBarItem: vscode.StatusBarItem;
+
+// Add back the execAsync function
+async function execAsync(command: string, options: cp.ExecOptions): Promise<string> {
+    return new Promise((resolve, reject) => {
+        cp.exec(command, options, (error, stdout, stderr) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve(stdout.trim());
+            }
+        });
+    });
+}
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
     constructor(
@@ -26,7 +45,13 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
     refresh(): void {
-        this._onDidChangeTreeData.fire();
+        if (isRefreshing) return;
+        isRefreshing = true;
+        try {
+            this._onDidChangeTreeData.fire();
+        } finally {
+            isRefreshing = false;
+        }
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -34,15 +59,43 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     async getChildren(): Promise<vscode.TreeItem[]> {
-        const currentVersion = this.getCurrentVersion();
-        const nextVer = nextVersion || this.bumpVersion(currentVersion, currentVersionMode);
+        const currentVersion = getCurrentVersion();
+        
+        // Only calculate next version if it hasn't been calculated or if version type changed
+        if (!lastCalculatedVersion || nextVersion === '') {
+            nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
+            lastCalculatedVersion = nextVersion;
+        }
+
+        // Reset shouldUpdateVersion flag after tree refresh
+        shouldUpdateVersion = false;
 
         const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
         currentItem.iconPath = new vscode.ThemeIcon('tag');
         currentItem.contextValue = 'current';
         
-        const nextItem = new vscode.TreeItem(`Next: ${nextVer}`, vscode.TreeItemCollapsibleState.None);
-        nextItem.iconPath = new vscode.ThemeIcon('arrow-up');
+        // Enhanced version mode visibility in tree view
+        const modeIcons = {
+            'patch': 'bug',
+            'minor': 'package',
+            'major': 'versions',
+            'none': 'close',
+            'custom': 'edit'
+        };
+        
+        const modeDescriptions = {
+            'patch': '(bug fixes)',
+            'minor': '(new features)',
+            'major': '(breaking changes)',
+            'none': '(no version change)',
+            'custom': '(custom version)'
+        };
+        
+        const nextItem = new vscode.TreeItem(
+            `Next: ${nextVersion} [${currentVersionMode} ${modeDescriptions[currentVersionMode]}]`, 
+            vscode.TreeItemCollapsibleState.None
+        );
+        nextItem.iconPath = new vscode.ThemeIcon(modeIcons[currentVersionMode]);
         nextItem.command = {
             command: 'extension.selectVersionType',
             title: 'Select Version Type'
@@ -142,87 +195,138 @@ async function getGitHubToken(): Promise<string | undefined> {
     }
 }
 
-async function createGitHubRelease(version: string, message: string = '', title?: string) {
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const prefix = config.get('releasePrefix', 'v');
-    
-    // Get token from VS Code's GitHub authentication
-    const token = await getGitHubToken();
-    
-    if (!token) {
-        const action = await vscode.window.showErrorMessage(
-            'GitHub authentication required for creating releases.',
-            'Sign in to GitHub'
-        );
-        
-        if (action === 'Sign in to GitHub') {
-            // Try to get the token again, this time forcing the login prompt
-            const newToken = await getGitHubToken();
-            if (!newToken) {
-                vscode.window.showErrorMessage('GitHub authentication failed.');
-                return;
-            }
-        } else {
-            return;
-        }
+async function getRepoUrl(): Promise<string> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        throw new Error('No workspace opened');
     }
 
+    // Get repository info from git config
+    const gitConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.git', 'config');
+    if (!fs.existsSync(gitConfigPath)) {
+        throw new Error('No git config found');
+    }
+
+    const gitConfig = fs.readFileSync(gitConfigPath, 'utf8');
+    const repoUrlMatch = gitConfig.match(/url = .*github\.com[:/](.+\/.+)\.git/);
+    
+    if (!repoUrlMatch) {
+        throw new Error('Could not find GitHub repository URL in git config');
+    }
+
+    return repoUrlMatch[1].replace(':', '/');
+}
+
+async function createGitHubRelease(version: string, message: string = '', title?: string) {
+    // Prevent recursive releases
+    if (isCreatingRelease) {
+        console.log('Release creation already in progress, skipping to prevent recursion');
+        return;
+    }
+    
+    isCreatingRelease = true;
     try {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            throw new Error('No workspace opened');
+        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+        const prefix = config.get('releasePrefix', 'v');
+        
+        // Run pre-release commands
+        const preReleaseCommands = config.get('preReleaseCommands', []) as string[];
+        if (preReleaseCommands.length > 0) {
+            try {
+                const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+                if (!workspaceRoot) {
+                    throw new Error('No workspace folder found');
+                }
+
+                for (const cmd of preReleaseCommands) {
+                    await new Promise<void>((resolve, reject) => {
+                        cp.exec(cmd, { cwd: workspaceRoot }, (error, stdout, stderr) => {
+                            if (error) {
+                                reject(new Error(`Command failed: ${cmd}\n${stderr}`));
+                                return;
+                            }
+                            console.log(`Command output: ${stdout}`);
+                            resolve();
+                        });
+                    });
+                }
+            } catch (error: unknown) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+                vscode.window.showErrorMessage(`Pre-release command failed: ${errorMessage}`);
+                return;
+            }
+        }
+        
+        // Get token from VS Code's GitHub authentication
+        const token = await getGitHubToken();
+        
+        if (!token) {
+            const action = await vscode.window.showErrorMessage(
+                'GitHub authentication required for creating releases.',
+                'Sign in to GitHub'
+            );
+            
+            if (action === 'Sign in to GitHub') {
+                // Try to get the token again, this time forcing the login prompt
+                const newToken = await getGitHubToken();
+                if (!newToken) {
+                    vscode.window.showErrorMessage('GitHub authentication failed.');
+                    return;
+                }
+            } else {
+                return;
+            }
         }
 
-        // Get repository info from git config
-        const gitConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.git', 'config');
-        const gitConfig = fs.readFileSync(gitConfigPath, 'utf8');
-        const repoUrlMatch = gitConfig.match(/url = .*github\.com[:/](.+\/.+)\.git/);
+        // Find release assets
+        const includePatterns = config.get('includePackageFiles', ['*.vsix']) as string[];
+        const assets: string[] = [];
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
         
-        if (!repoUrlMatch) {
-            throw new Error('Could not find GitHub repository URL in git config');
+        if (workspaceRoot) {
+            for (const pattern of includePatterns) {
+                const files = await vscode.workspace.findFiles(
+                    new vscode.RelativePattern(workspaceRoot, pattern)
+                );
+                assets.push(...files.map(f => f.fsPath));
+            }
         }
 
-        const repoFullName = repoUrlMatch[1].replace(':', '/');
-        const tagName = `${prefix}${version}`;
-        
-        // Create release using GitHub API
-        const response = await axios.post(
-            `https://api.github.com/repos/${repoFullName}/releases`,
-            {
-                tag_name: tagName,
-                name: title || tagName,
-                body: message || `Release ${tagName}`,
+        try {
+            // Create the release
+            const octokit = new Octokit({ auth: token });
+            const repoUrl = await getRepoUrl();
+            const [owner, repo] = repoUrl.split('/').slice(-2);
+            
+            const releaseResponse = await octokit.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: `${prefix}${version}`,
+                name: title || `Release ${prefix}${version}`,
+                body: message,
                 draft: false,
                 prerelease: false
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept': 'application/vnd.github.v3+json'
-                }
-            }
-        );
+            });
 
-        if (response.status === 201) {
-            const releaseUrl = response.data.html_url;
-            const action = await vscode.window.showInformationMessage(
-                `GitHub release ${tagName} created successfully!`,
-                'Open in Browser'
-            );
-            if (action === 'Open in Browser') {
-                vscode.env.openExternal(vscode.Uri.parse(releaseUrl));
+            // Upload assets if any
+            for (const asset of assets) {
+                const content = await fs.promises.readFile(asset);
+                await octokit.rest.repos.uploadReleaseAsset({
+                    owner,
+                    repo,
+                    release_id: releaseResponse.data.id,
+                    name: path.basename(asset),
+                    data: content as any
+                });
             }
+
+            vscode.window.showInformationMessage(`Release ${prefix}${version} created successfully!`);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            vscode.window.showErrorMessage(`Failed to create release: ${errorMessage}`);
         }
-    } catch (error: any) {
-        let errorMessage = 'Failed to create GitHub release';
-        if (error.response?.data?.message) {
-            errorMessage += `: ${error.response.data.message}`;
-        } else if (error.message) {
-            errorMessage += `: ${error.message}`;
-        }
-        vscode.window.showErrorMessage(errorMessage);
-        console.error('GitHub Release Error:', error);
-        throw error; // Re-throw for the progress indicator
+    } finally {
+        isCreatingRelease = false;  // Reset the flag when done, even if there was an error
     }
 }
 
@@ -451,18 +555,98 @@ class ReleaseWebviewProvider {
     }
 }
 
+function getCurrentVersion(): string {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        vscode.window.showErrorMessage("No workspace opened.");
+        return "";
+    }
+
+    const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    const versionFilePath = path.join(workspaceFolders[0].uri.fsPath, config.get('versionFile', ''));
+
+    try {
+        // First try VERSION file if configured
+        if (config.get('versionFile', '') && fs.existsSync(versionFilePath)) {
+            return fs.readFileSync(versionFilePath, 'utf-8').trim();
+        }
+
+        // Then try package.json
+        if (fs.existsSync(packageJsonPath)) {
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            return packageJson.version || '1.0.0';
+        }
+
+        vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
+        return "";
+    } catch (error) {
+        console.error('Error reading version:', error);
+        vscode.window.showErrorMessage(`Failed to read version: ${error}`);
+        return "";
+    }
+}
+
+async function updateVersion(version: string, type: VersionType = 'patch') {
+    if (isUpdatingVersion) {
+        console.log('Version update already in progress, skipping to prevent recursion');
+        return;
+    }
+
+    // Only proceed if explicitly requested through commit
+    if (!shouldUpdateVersion) {
+        console.log('Version update not requested, skipping');
+        return;
+    }
+
+    isUpdatingVersion = true;
+    try {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (!workspaceFolders) {
+            throw new Error('No workspace folder found');
+        }
+
+        const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, PACKAGE_JSON);
+        if (!fs.existsSync(packageJsonPath)) {
+            throw new Error('package.json not found');
+        }
+
+        // Read the current package.json
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        
+        // Only update if the version is actually different
+        if (packageJson.version !== version) {
+            // Store old version for comparison
+            const oldVersion = packageJson.version;
+            
+            // Update version in package.json
+            packageJson.version = version;
+            fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+            
+            // Reset the cached version to force recalculation
+            lastCalculatedVersion = undefined;
+            nextVersion = '';
+            
+            // Create git tag if enabled and this is a new version
+            if (enableAutoTag && version !== oldVersion) {
+                const prefix = vscode.workspace.getConfiguration(EXTENSION_NAME).get('releasePrefix', 'v');
+                await execAsync(`git tag ${prefix}${version}`, { cwd: workspaceFolders[0].uri.fsPath });
+                await execAsync('git push origin --tags', { cwd: workspaceFolders[0].uri.fsPath });
+            }
+        }
+    } catch (error) {
+        console.error('Error updating version:', error);
+        vscode.window.showErrorMessage(`Failed to update version: ${error}`);
+    } finally {
+        isUpdatingVersion = false;
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Version Control extension is now active!');
 
     // Create the version provider
     const versionProvider = new VersionProvider();
-
-    // Register the tree data provider
-    const treeView = vscode.window.createTreeView('scm-version-selector', {
-        treeDataProvider: versionProvider,
-        showCollapseAll: false
-    });
-    context.subscriptions.push(treeView);
 
     // Get formatted version type for display
     const getVersionTypeDisplay = (type: VersionType): string => {
@@ -473,56 +657,100 @@ export function activate(context: vscode.ExtensionContext) {
     // Update title when versions change
     const updateTitle = () => {
         const currentVersion = versionProvider.getCurrentVersion();
-        const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
-        const versionDisplay = currentVersionMode === 'none' ? 
-            `Version Control (${currentVersion}) [No Change]` :
-            `Version Control (${currentVersion} → ${nextVer}) [${getVersionTypeDisplay(currentVersionMode)}]`;
-        treeView.title = versionDisplay;
+        nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+        lastCalculatedVersion = nextVersion;
+        
+        // Keep the main title simple
+        treeView.title = 'Version Control';
+        
+        // Show version details in the description
+        treeView.description = currentVersionMode === 'none' ? 
+            `${currentVersion} [No Change]` :
+            `${currentVersion} → ${nextVersion} [${getVersionTypeDisplay(currentVersionMode)}]`;
+        updateScmInputBox();
     };
 
-    // Initial title update
+    // Create and register the tree view
+    const treeView = vscode.window.createTreeView('scm-version-selector', {
+        treeDataProvider: versionProvider,
+        showCollapseAll: false
+    });
+    context.subscriptions.push(treeView);
+
+    // Initial title update without triggering version change
+    const currentVersion = versionProvider.getCurrentVersion();
+    nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    lastCalculatedVersion = nextVersion;
     updateTitle();
+
+    // Create status bar item
+    const versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    versionStatusBarItem.command = 'extension.selectVersionType';
+    context.subscriptions.push(versionStatusBarItem);
+
+    // Update status bar with current version mode
+    function updateVersionStatusBar() {
+        const modeEmojis: Record<string, string> = {
+            'patch': '🐛',
+            'minor': '✨',
+            'major': '💥',
+            'none': '⛔',
+            'custom': '✏️'
+        };
+        
+        versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
+        versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
+        versionStatusBarItem.show();
+    }
+
+    // Initial status bar update
+    updateVersionStatusBar();
 
     // Register version selection command
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.selectVersionType', async () => {
-            const items = [
-                { label: '$(arrow-small-right) Patch', description: 'Increment patch version (default)', type: 'patch' as const },
-                { label: '$(arrow-right) Minor', description: 'Increment minor version', type: 'minor' as const },
-                { label: '$(arrow-up) Major', description: 'Increment major version', type: 'major' as const },
-                { label: '$(pencil) Custom', description: 'Set custom version', type: 'custom' as const },
-                { label: '$(x) No Change', description: 'Keep current version', type: 'none' as const }
+            const items: vscode.QuickPickItem[] = [
+                { label: '$(bug) Patch', description: 'Bug fixes (0.0.X)', detail: 'For backwards-compatible bug fixes' },
+                { label: '$(package) Minor', description: 'New features (0.X.0)', detail: 'For backwards-compatible features' },
+                { label: '$(versions) Major', description: 'Breaking changes (X.0.0)', detail: 'For incompatible API changes' },
+                { label: '$(close) None', description: 'No version change', detail: 'Skip version bump for this commit' },
+                { label: '$(edit) Custom', description: 'Set custom version', detail: 'Manually specify version number' }
             ];
 
             const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Select version update type'
+                placeHolder: 'Select version type for next commit',
+                title: 'Version Type'
             });
 
             if (selected) {
-                if (selected.type === 'custom') {
-                    const currentVersion = versionProvider.getCurrentVersion();
+                const type = selected.label.toLowerCase().includes('patch') ? 'patch' :
+                            selected.label.toLowerCase().includes('minor') ? 'minor' :
+                            selected.label.toLowerCase().includes('major') ? 'major' :
+                            selected.label.toLowerCase().includes('none') ? 'none' :
+                            'custom';
+
+                if (type === 'custom') {
                     const input = await vscode.window.showInputBox({
-                        prompt: 'Enter custom version (e.g., 1.2.3)',
-                        value: currentVersion,
+                        prompt: 'Enter custom version number (e.g., 1.2.3)',
                         validateInput: (value) => {
-                            return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
+                            return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version number (e.g., 1.2.3)';
                         }
                     });
-
                     if (input) {
-                        currentVersionMode = 'custom';
+                        currentVersionMode = type;
                         customVersion = input;
                         nextVersion = input;
-                        versionProvider.refresh();
-                        updateTitle();
                     }
                 } else {
-                    currentVersionMode = selected.type;
+                    currentVersionMode = type;
+                    customVersion = undefined;
                     const currentVersion = versionProvider.getCurrentVersion();
-                    nextVersion = versionProvider.bumpVersion(currentVersion, selected.type);
-                    versionProvider.refresh();
-                    updateTitle();
+                    nextVersion = type === 'none' ? currentVersion : versionProvider.bumpVersion(currentVersion, type);
                 }
+                
+                updateVersionStatusBar();
+                updateTitle();
+                versionProvider.refresh();
             }
         })
     );
@@ -531,6 +759,89 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.openVersionSettings', () => {
             vscode.commands.executeCommand('workbench.action.openSettings', '@ext:TriexDev.github-versionsync');
+        })
+    );
+
+    // Add updateScmInputBox function
+    function updateScmInputBox() {
+        const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+        if (!gitExtension) {
+            return;
+        }
+
+        const git = gitExtension.getAPI(1);
+        const repo = git.repositories[0];
+        if (!repo) {
+            return;
+        }
+
+        const currentText = repo.inputBox.value;
+        
+        // Only update if there's a version change
+        if (currentVersionMode !== 'none' && nextVersion !== lastCalculatedVersion) {
+            // Extract the version from the commit message if it exists
+            const versionMatch = currentText.match(/v\d+\.\d+\.\d+/);
+            if (versionMatch) {
+                // Replace existing version
+                repo.inputBox.value = currentText.replace(versionMatch[0], `v${nextVersion}`);
+            } else {
+                // Add version to the end if not present
+                repo.inputBox.value = currentText.trim() + ` v${nextVersion}`;
+            }
+            lastCalculatedVersion = nextVersion;
+        }
+    }
+
+    // Register GitHub release toggle command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.toggleGitHubRelease', async () => {
+            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+            const currentEnabled = config.get('enableGitHubRelease', false);
+            await config.update('enableGitHubRelease', !currentEnabled, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(`Automatic GitHub releases ${!currentEnabled ? 'enabled' : 'disabled'}`);
+            versionProvider.refresh();
+        })
+    );
+
+    // Register create one-off release command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.createOneOffRelease', async () => {
+            try {
+                // Try to get GitHub token first
+                const token = await getGitHubToken();
+                if (!token) {
+                    const action = await vscode.window.showInformationMessage(
+                        'GitHub authentication required for creating releases.',
+                        'Sign in to GitHub'
+                    );
+                    
+                    if (action === 'Sign in to GitHub') {
+                        const newToken = await getGitHubToken();
+                        if (!newToken) {
+                            vscode.window.showErrorMessage('GitHub authentication failed.');
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
+                }
+
+                // Show the webview
+                await releaseWebviewProvider.show();
+            } catch (error) {
+                console.error('Create Release Error:', error);
+                vscode.window.showErrorMessage(`Failed to create release: ${error}`);
+            }
+        })
+    );
+
+    // Create and register the webview provider
+    const releaseWebviewProvider = new ReleaseWebviewProvider(context.extensionUri);
+
+    // Register the title click command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('scm-version-selector.titleClick', () => {
+            vscode.commands.executeCommand('extension.selectVersionType');
         })
     );
 
@@ -575,28 +886,35 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Update SCM input box when version changes
-    const updateScmInputBox = () => {
-        const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
-        if (gitExtension) {
-            const git = gitExtension.getAPI(1);
-            if (git) {
-                const repo = git.repositories[0];
-                if (repo) {
-                    const currentVersion = versionProvider.getCurrentVersion();
-                    const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
-                    repo.inputBox.placeholder = `Commit message (Version: ${currentVersion} → ${nextVer})`;
-                }
-            }
-        }
-    };
+    // // Update SCM input box when version changes
+    // const updateScmInputBox = () => {
+    //     const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+    //     if (gitExtension) {
+    //         const git = gitExtension.getAPI(1);
+    //         if (git) {
+    //             const repo = git.repositories[0];
+    //             if (repo) {
+    //                 const currentVersion = versionProvider.getCurrentVersion();
+    //                 // Don't trigger version updates, just show the potential next version
+    //                 const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    //                 const versionChanged = currentVersion !== nextVer && currentVersionMode !== 'none';
+    //                 const currentMessage = repo.inputBox.value;
+                    
+    //                 // Only update if there's no message or if it doesn't already contain version info
+    //                 if (currentMessage && !currentMessage.includes(nextVer)) {
+    //                     repo.inputBox.placeholder = `Commit message v${nextVer} (e.g., feat: Add new feature v${nextVer})`;
+    //                 }
+    //             }
+    //         }
+    //     }
+    // };
 
     // Initial update
     updateScmInputBox();
 
     // Register the test button command
     context.subscriptions.push(
-        vscode.commands.registerCommand('extension.testSourceControl', () => {
+        vscode.commands.registerCommand('github-versionsync.testSourceControl', () => {
             versionProvider.refresh();
             vscode.window.showInformationMessage('Test button clicked - refreshing source control view!');
         })
@@ -605,12 +923,139 @@ export function activate(context: vscode.ExtensionContext) {
     // Add test button
     const testButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
     testButton.text = "$(versions) Test Version Control";
-    testButton.command = 'extension.testSourceControl';
+    testButton.command = 'github-versionsync.testSourceControl';
     testButton.tooltip = 'Click to test version control view';
     testButton.show();
     context.subscriptions.push(testButton);
 
-    const releaseWebviewProvider = new ReleaseWebviewProvider(context.extensionUri);
+    // Get the git extension
+    const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+    if (gitExtension) {
+        const git = gitExtension.getAPI(1);
+        
+        // Register our pre-commit command
+        context.subscriptions.push(
+            vscode.commands.registerCommand('github-versionsync.preCommit', async () => {
+                const repo = git.repositories[0];
+                if (!repo) return;
+
+                try {
+                    // Get current message and version info
+                    const currentMessage = repo.inputBox.value;
+                    if (!currentMessage.trim()) {
+                        vscode.window.showErrorMessage('Please enter a commit message');
+                        return;
+                    }
+
+                    // Check if there are staged changes
+                    const hasStagedChanges = repo.state.indexChanges.length > 0;
+                    const hasNonPackageChanges = repo.state.indexChanges.some((change: any) => 
+                        !change.uri.path.endsWith('package.json')
+                    );
+
+                    if (!hasStagedChanges) {
+                        vscode.window.showInformationMessage('No changes staged for commit');
+                        return;
+                    }
+
+                    const currentVersion = versionProvider.getCurrentVersion();
+                    const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+
+                    // Only proceed with version update if we have changes and version mode is not 'none'
+                    if (hasStagedChanges && currentVersionMode !== 'none') {
+                        // Set flag before version update
+                        shouldUpdateVersion = true;
+
+                        // Update version in package.json if needed
+                        if (currentVersion !== nextVer) {
+                            // Update version first
+                            await updateVersion(nextVer, currentVersionMode);
+                            
+                            // Stage package.json after version update
+                            const workspaceFolders = vscode.workspace.workspaceFolders;
+                            if (workspaceFolders) {
+                                const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
+                                await repo.add([packageJsonPath]);
+
+                                // Update commit message with version if not already present
+                                if (!currentMessage.includes(`v${nextVer}`)) {
+                                    repo.inputBox.value = `${currentMessage} v${nextVer}`;
+                                }
+                            }
+                        }
+
+                        // Execute the commit command
+                        await vscode.commands.executeCommand('git.commit');
+
+                        // Create and push git tag immediately after commit if needed
+                        if (enableAutoTag && currentVersion !== nextVer) {
+                            const workspaceFolders = vscode.workspace.workspaceFolders;
+                            if (workspaceFolders) {
+                                try {
+                                    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+                                    const prefix = config.get('releasePrefix', 'v');
+                                    await execAsync(`git tag ${prefix}${nextVer}`, { cwd: workspaceFolders[0].uri.fsPath });
+                                    await execAsync('git push origin --tags', { cwd: workspaceFolders[0].uri.fsPath });
+                                    
+                                    // Reset version mode after successful update
+                                    currentVersionMode = 'patch'; // Reset to patch instead of none
+                                    const newCurrentVersion = versionProvider.getCurrentVersion();
+                                    nextVersion = versionProvider.bumpVersion(newCurrentVersion, currentVersionMode);
+                                    lastCalculatedVersion = nextVersion;
+                                    versionProvider.refresh();
+                                    updateVersionStatusBar();
+                                    updateTitle();
+                                } catch (error) {
+                                    console.error('Error creating/pushing git tag:', error);
+                                    vscode.window.showErrorMessage(`Failed to create/push git tag: ${error}`);
+                                }
+                            }
+                        }
+                    } else {
+                        // If no version update needed, just commit
+                        await vscode.commands.executeCommand('git.commit');
+                    }
+                } catch (error) {
+                    console.error('Error in pre-commit:', error);
+                    vscode.window.showErrorMessage(`Failed to prepare commit: ${error}`);
+                } finally {
+                    // Always reset the flag
+                    shouldUpdateVersion = false;
+                }
+            })
+        );
+
+        // Watch for repository changes
+        context.subscriptions.push(
+            git.onDidChangeState(() => {
+                const repo = git.repositories[0];
+                if (repo) {
+                    // Watch for changes to the commit message
+                    repo.inputBox.onDidChange(() => {
+                        const currentMessage = repo.inputBox.value;
+                        const currentVersion = versionProvider.getCurrentVersion();
+                        const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+                        
+                        // Only update placeholder if version change is needed and message doesn't have version
+                        if (currentVersionMode !== 'none' && currentVersion !== nextVer && !currentMessage.includes(`v${nextVer}`)) {
+                            repo.inputBox.placeholder = `Commit message (version v${nextVer} will be auto-appended)`;
+                        }
+                    });
+                }
+            })
+        );
+    }
+
+    // Register GitHub release toggle command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.toggleGitHubRelease', async () => {
+            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+            const currentEnabled = config.get('enableGitHubRelease', false);
+            await config.update('enableGitHubRelease', !currentEnabled, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage(`Automatic GitHub releases ${!currentEnabled ? 'enabled' : 'disabled'}`);
+            versionProvider.refresh();
+        })
+    );
 
     // Register create one-off release command
     context.subscriptions.push(
@@ -644,188 +1089,12 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Register GitHub release toggle command
+    // Register the tree view click handler
     context.subscriptions.push(
-        vscode.commands.registerCommand('extension.toggleGitHubRelease', async () => {
-            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-            const currentEnabled = config.get('enableGitHubRelease', false);
-            
-            if (!currentEnabled) {
-                // Try to get GitHub token
-                const token = await getGitHubToken();
-                if (!token) {
-                    const action = await vscode.window.showInformationMessage(
-                        'GitHub authentication required for automatic releases.',
-                        'Sign in to GitHub'
-                    );
-                    
-                    if (action === 'Sign in to GitHub') {
-                        const newToken = await getGitHubToken();
-                        if (!newToken) {
-                            vscode.window.showErrorMessage('GitHub authentication failed.');
-                            return;
-                        }
-                    } else {
-                        return;
-                    }
-                }
-            }
-
-            await config.update('enableGitHubRelease', !currentEnabled, vscode.ConfigurationTarget.Global);
-            versionProvider.refresh();
+        vscode.commands.registerCommand('scm-version-selector.titleClick', () => {
+            vscode.commands.executeCommand('extension.selectVersionType');
         })
     );
-
-    // ... rest of activate function ...
-}
-
-async function updateVersionAndCommit(type: VersionType) {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        vscode.window.showErrorMessage("No workspace opened.");
-        return;
-    }
-
-    const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const versionFilePath = path.join(workspaceFolders[0].uri.fsPath, config.get('versionFile', ''));
-
-    if (!fs.existsSync(packageJsonPath)) {
-        vscode.window.showErrorMessage("package.json not found in workspace root.");
-        return;
-    }
-
-    const currentVersion = getCurrentVersion();
-    const newVersion = type === 'none' ? currentVersion : 
-                      type === 'custom' ? (customVersion || currentVersion) : 
-                      bumpVersion(currentVersion, type);
-
-    // Update package.json
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    packageJson.version = newVersion;
-    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
-
-    // Update VERSION file if it exists and is configured
-    const versionFile = config.get('versionFile', '');
-    if (versionFile && fs.existsSync(versionFilePath)) {
-        fs.writeFileSync(versionFilePath, newVersion + '\n');
-    }
-
-    // Create git commit and tag
-    if (type !== 'none') {
-        try {
-            const message = `chore: bump version to ${newVersion}`;
-            
-            // Stage files
-            await execAsync(`git add ${packageJsonPath}${versionFile ? ` ${versionFilePath}` : ''}`, { cwd: workspaceFolders[0].uri.fsPath });
-            
-            // Create commit
-            await execAsync(`git commit -m "${message}"`, { cwd: workspaceFolders[0].uri.fsPath });
-
-            // Create and push tag if enabled
-            if (config.get('enableAutoTag', true)) {
-                const prefix = config.get('releasePrefix', 'v');
-                const tagName = `${prefix}${newVersion}`;
-                await execAsync(`git tag ${tagName}`, { cwd: workspaceFolders[0].uri.fsPath });
-                await execAsync('git push --tags', { cwd: workspaceFolders[0].uri.fsPath });
-            }
-
-            // Create GitHub release if automatic releases are enabled and version type matches setting
-            if (config.get('enableGitHubRelease', false)) {
-                const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
-                if (['major', 'minor', 'patch'].includes(type) && releaseOn.includes(type)) {
-                    await createGitHubRelease(newVersion, message);
-                }
-            }
-
-            vscode.window.showInformationMessage(`Version updated to ${newVersion}`);
-        } catch (error: any) {
-            vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
-            console.error('Version Update Error:', error);
-        }
-    }
-}
-
-function getCurrentVersion(): string {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        vscode.window.showErrorMessage("No workspace opened.");
-        return "";
-    }
-
-    const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const versionFilePath = path.join(workspaceFolders[0].uri.fsPath, config.get('versionFile', ''));
-
-    try {
-        // First try VERSION file if configured
-        if (config.get('versionFile', '') && fs.existsSync(versionFilePath)) {
-            return fs.readFileSync(versionFilePath, 'utf-8').trim();
-        }
-
-        // Then try package.json
-        if (fs.existsSync(packageJsonPath)) {
-            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-            return packageJson.version || '1.0.0';
-        }
-
-        vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
-        return "";
-    } catch (error) {
-        console.error('Error reading version:', error);
-        vscode.window.showErrorMessage(`Failed to read version: ${error}`);
-        return "";
-    }
-}
-
-function getVersionFilePath(): string {
-    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-
-    if (!rootPath) {
-        vscode.window.showErrorMessage("No workspace opened.");
-        return "";
-    }
-
-    let versionFile = config.get<string>('versionFile', 'VERSION');
-    const versionPath = path.join(rootPath, versionFile);
-    const packagePath = path.join(rootPath, 'package.json');
-
-    if (fs.existsSync(versionPath)) return versionPath;
-    if (fs.existsSync(packagePath)) return packagePath;
-
-    vscode.window.showErrorMessage("No version file found (expected VERSION or package.json).");
-    return "";
-}
-
-function bumpVersion(version: string, type: 'major' | 'minor' | 'patch' | 'none'): string {
-    if (type === 'none') {
-        return version;
-    }
-
-    const parts = version.split('.').map(Number);
-
-    if (type === 'major') {
-        return `${parts[0] + 1}.0.0`;
-    } else if (type === 'minor') {
-        return `${parts[0]}.${parts[1] + 1}.0`;
-    } else if (type === 'patch') {
-        return `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
-    }
-
-    return version;
-}
-
-async function execAsync(command: string, options: cp.ExecOptions) {
-    return new Promise((resolve, reject) => {
-        cp.exec(command, options, (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(stdout);
-            }
-        });
-    });
 }
 
 export function deactivate() {}
