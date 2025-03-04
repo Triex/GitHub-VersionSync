@@ -179,6 +179,18 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
     enableAutoTag = config.get('enableAutoTag', true);
     enableGitHubRelease = config.get('enableGitHubRelease', false);
+    const versionFile = config.get('versionFile', '');
+
+    // Show version file status in status bar
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.text = versionFile ? 
+        `$(file) Using VERSION file: ${versionFile}` : 
+        `$(package) Using package.json only`;
+    statusBarItem.tooltip = versionFile ? 
+        `Version is managed in both ${versionFile} and package.json` : 
+        'Version is managed in package.json only';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
 
     // Register configuration change listener
     context.subscriptions.push(
@@ -187,7 +199,19 @@ export function activate(context: vscode.ExtensionContext) {
                 const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
                 enableAutoTag = config.get('enableAutoTag', true);
                 enableGitHubRelease = config.get('enableGitHubRelease', false);
-                console.log(`Configuration updated - AutoTag: ${enableAutoTag}, GitHubRelease: ${enableGitHubRelease}`);
+                const newVersionFile = config.get('versionFile', '');
+                
+                // Update status bar if version file changes
+                if (newVersionFile !== versionFile) {
+                    statusBarItem.text = newVersionFile ? 
+                        `$(file) Using VERSION file: ${newVersionFile}` : 
+                        `$(package) Using package.json only`;
+                    statusBarItem.tooltip = newVersionFile ? 
+                        `Version is managed in both ${newVersionFile} and package.json` : 
+                        'Version is managed in package.json only';
+                }
+                
+                console.log(`Configuration updated - AutoTag: ${enableAutoTag}, GitHubRelease: ${enableGitHubRelease}, VersionFile: ${newVersionFile || 'none'}`);
             }
         })
     );

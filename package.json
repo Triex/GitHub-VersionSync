@@ -20,17 +20,22 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "VersionSync",
+      "title": "GitHub Version Sync",
       "properties": {
+        "github-versionsync.versionFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: Path to a VERSION file (relative to workspace root). Leave empty to use only package.json"
+        },
         "github-versionsync.enableAutoTag": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically create and push git tags when committing version changes"
+          "description": "Automatically create Git tags when version is updated"
         },
-        "github-versionsync.versionFile": {
-          "type": "string",
-          "default": "VERSION",
-          "description": "Name of the version file to use (relative to workspace root)"
+        "github-versionsync.enableGitHubRelease": {
+          "type": "boolean",
+          "default": false,
+          "description": "Create GitHub releases when version is updated (requires GitHub authentication)"
         }
       }
     },
