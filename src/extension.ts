@@ -8,9 +8,10 @@ const EXTENSION_NAME = 'github-versionsync';
 const PACKAGE_JSON = 'package.json';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
-type VersionType = 'major' | 'minor' | 'patch';
+type VersionType = 'major' | 'minor' | 'patch' | 'custom' | 'none';
 let currentVersionMode: VersionType = 'patch';
 let nextVersion: string = '';
+let customVersion: string | undefined;
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
     constructor(
@@ -70,6 +71,10 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     bumpVersion(version: string, type: VersionType): string {
+        if (type === 'none') {
+            return version;
+        }
+
         const [major, minor, patch] = version.split('.').map(Number);
         
         switch (type) {
@@ -79,6 +84,8 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 return `${major}.${minor + 1}.0`;
             case 'patch':
                 return `${major}.${minor}.${patch + 1}`;
+            case 'custom':
+                return customVersion || version;
             default:
                 return version;
         }
@@ -100,14 +107,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Get formatted version type for display
     const getVersionTypeDisplay = (type: VersionType): string => {
-        return type.charAt(0).toUpperCase() + type.slice(1);
+        if (type === 'none') return 'No Change';
+        return type === 'custom' ? 'Custom' : type.charAt(0).toUpperCase() + type.slice(1);
     };
 
     // Update title when versions change
     const updateTitle = () => {
         const currentVersion = versionProvider.getCurrentVersion();
         const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
-        treeView.title = `Version Control (${currentVersion} → ${nextVer}) [${getVersionTypeDisplay(currentVersionMode)}]`;
+        const versionDisplay = currentVersionMode === 'none' ? 
+            `Version Control (${currentVersion}) [No Change]` :
+            `Version Control (${currentVersion} → ${nextVer}) [${getVersionTypeDisplay(currentVersionMode)}]`;
+        treeView.title = versionDisplay;
     };
 
     // Initial title update
@@ -119,7 +130,9 @@ export function activate(context: vscode.ExtensionContext) {
             const items = [
                 { label: '$(arrow-small-right) Patch', description: 'Increment patch version (default)', type: 'patch' as const },
                 { label: '$(arrow-right) Minor', description: 'Increment minor version', type: 'minor' as const },
-                { label: '$(arrow-up) Major', description: 'Increment major version', type: 'major' as const }
+                { label: '$(arrow-up) Major', description: 'Increment major version', type: 'major' as const },
+                { label: '$(pencil) Custom', description: 'Set custom version', type: 'custom' as const },
+                { label: '$(x) No Change', description: 'Keep current version', type: 'none' as const }
             ];
 
             const selected = await vscode.window.showQuickPick(items, {
@@ -127,11 +140,30 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             if (selected) {
-                currentVersionMode = selected.type;
-                const currentVersion = versionProvider.getCurrentVersion();
-                nextVersion = versionProvider.bumpVersion(currentVersion, selected.type);
-                versionProvider.refresh();
-                updateTitle();
+                if (selected.type === 'custom') {
+                    const currentVersion = versionProvider.getCurrentVersion();
+                    const input = await vscode.window.showInputBox({
+                        prompt: 'Enter custom version (e.g., 1.2.3)',
+                        value: currentVersion,
+                        validateInput: (value) => {
+                            return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
+                        }
+                    });
+
+                    if (input) {
+                        currentVersionMode = 'custom';
+                        customVersion = input;
+                        nextVersion = input;
+                        versionProvider.refresh();
+                        updateTitle();
+                    }
+                } else {
+                    currentVersionMode = selected.type;
+                    const currentVersion = versionProvider.getCurrentVersion();
+                    nextVersion = versionProvider.bumpVersion(currentVersion, selected.type);
+                    versionProvider.refresh();
+                    updateTitle();
+                }
             }
         })
     );
@@ -196,7 +228,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(testButton);
 }
 
-async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
+async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custom' | 'none') {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage("No workspace opened.");
@@ -210,7 +242,12 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
     }
 
     const currentVersion = getCurrentVersion();
-    const newVersion = bumpVersion(currentVersion, type);
+    let newVersion: string;
+    if (type === 'custom') {
+        newVersion = customVersion || currentVersion;
+    } else {
+        newVersion = bumpVersion(currentVersion, type);
+    }
 
     // Update VERSION file if it exists
     if (fs.existsSync(versionFilePath)) {
@@ -293,21 +330,22 @@ function getVersionFilePath(): string {
     return "";
 }
 
-function bumpVersion(version: string, type: 'patch' | 'minor' | 'major'): string {
+function bumpVersion(version: string, type: 'major' | 'minor' | 'patch' | 'none'): string {
+    if (type === 'none') {
+        return version;
+    }
+
     const parts = version.split('.').map(Number);
 
     if (type === 'major') {
-        parts[0] += 1;
-        parts[1] = 0;
-        parts[2] = 0;
+        return `${parts[0] + 1}.0.0`;
     } else if (type === 'minor') {
-        parts[1] += 1;
-        parts[2] = 0;
-    } else {
-        parts[2] += 1;
+        return `${parts[0]}.${parts[1] + 1}.0`;
+    } else if (type === 'patch') {
+        return `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
     }
 
-    return parts.join('.');
+    return version;
 }
 
 async function createGitHubRelease(newVersion: string, rootPath: string) {
