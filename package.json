@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "publisher": "TriexDev",
   "engines": {
-    "vscode": "^1.94.0"
+    "vscode": "^1.74.0"
   },
   "categories": [
     "Source Control"
@@ -35,7 +35,12 @@
         "github-versionsync.enableGitHubRelease": {
           "type": "boolean",
           "default": false,
-          "description": "Create GitHub releases when version is updated (requires GitHub authentication)"
+          "description": "Create GitHub releases automatically when version is updated"
+        },
+        "github-versionsync.releasePrefix": {
+          "type": "string",
+          "default": "v",
+          "description": "Prefix to use for release tags (e.g., 'v' for v1.0.0)"
         }
       }
     },
@@ -50,6 +55,12 @@
         "command": "extension.openVersionSettings",
         "title": "Version Settings",
         "icon": "$(gear)",
+        "category": "Version Control"
+      },
+      {
+        "command": "extension.toggleGitHubRelease",
+        "title": "Toggle GitHub Releases",
+        "icon": "$(github)",
         "category": "Version Control"
       }
     ],
@@ -71,6 +82,10 @@
         {
           "command": "extension.selectVersionType",
           "group": "1_version@1"
+        },
+        {
+          "command": "extension.toggleGitHubRelease",
+          "group": "navigation"
         }
       ],
       "view/title": [
