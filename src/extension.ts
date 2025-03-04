@@ -12,48 +12,96 @@ let currentVersionMode: 'major' | 'minor' | 'patch' | 'custom' = 'patch';
 let customVersion: string | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+    console.log('GitHub Version Sync is now active!');
+
     // Create status bar item
     versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     versionStatusBarItem.command = 'extension.customVersion';
     context.subscriptions.push(versionStatusBarItem);
+    
+    // Initialize version display
     updateVersionDisplay();
+    versionStatusBarItem.show();
 
-    context.subscriptions.push(
-        vscode.commands.registerCommand('extension.versionCommitPatch', () => {
-            currentVersionMode = 'patch';
-            updateVersionDisplay();
-            updateVersionAndCommit('patch');
-        }),
-        vscode.commands.registerCommand('extension.versionCommitMinor', () => {
-            currentVersionMode = 'minor';
-            updateVersionDisplay();
-            updateVersionAndCommit('minor');
-        }),
-        vscode.commands.registerCommand('extension.versionCommitMajor', () => {
-            currentVersionMode = 'major';
-            updateVersionDisplay();
-            updateVersionAndCommit('major');
-        }),
-        vscode.commands.registerCommand('extension.customVersion', async () => {
-            const currentVersion = getCurrentVersion();
-            const input = await vscode.window.showInputBox({
-                prompt: "Enter custom version (e.g., 1.2.3)",
-                value: customVersion || currentVersion,
-                validateInput: (value) => {
-                    return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
-                }
-            });
-
-            if (input) {
-                currentVersionMode = 'custom';
-                customVersion = input;
+    // Register our commands with icons
+    const commands = [
+        {
+            command: 'extension.versionCommitPatch',
+            callback: () => {
+                console.log('Patch version command triggered');
+                currentVersionMode = 'patch';
                 updateVersionDisplay();
-                updateVersionAndCommit('custom');
+                updateVersionAndCommit('patch');
             }
-        }),
-        vscode.commands.registerCommand('extension.toggleGitHubRelease', toggleGitHubRelease),
-        vscode.commands.registerCommand('extension.toggleAutoTag', toggleAutoTag)
-    );
+        },
+        {
+            command: 'extension.versionCommitMinor',
+            callback: () => {
+                console.log('Minor version command triggered');
+                currentVersionMode = 'minor';
+                updateVersionDisplay();
+                updateVersionAndCommit('minor');
+            }
+        },
+        {
+            command: 'extension.versionCommitMajor',
+            callback: () => {
+                console.log('Major version command triggered');
+                currentVersionMode = 'major';
+                updateVersionDisplay();
+                updateVersionAndCommit('major');
+            }
+        },
+        {
+            command: 'extension.customVersion',
+            callback: async () => {
+                console.log('Custom version command triggered');
+                const currentVersion = getCurrentVersion();
+                const input = await vscode.window.showInputBox({
+                    prompt: "Enter custom version (e.g., 1.2.3)",
+                    value: customVersion || currentVersion,
+                    validateInput: (value) => {
+                        return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
+                    }
+                });
+
+                if (input) {
+                    currentVersionMode = 'custom';
+                    customVersion = input;
+                    updateVersionDisplay();
+                    updateVersionAndCommit('custom');
+                }
+            }
+        },
+        {
+            command: 'extension.toggleGitHubRelease',
+            callback: toggleGitHubRelease
+        },
+        {
+            command: 'extension.toggleAutoTag',
+            callback: toggleAutoTag
+        }
+    ];
+
+    commands.forEach(({ command, callback }) => {
+        const disposable = vscode.commands.registerCommand(command, callback);
+        context.subscriptions.push(disposable);
+        console.log(`Registered command: ${command}`);
+    });
+
+    // Check if we're in a git repository
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders) {
+        const rootPath = workspaceFolders[0].uri.fsPath;
+        try {
+            cp.execSync('git rev-parse --git-dir', { cwd: rootPath });
+            console.log('Git repository detected');
+            versionStatusBarItem.show();
+        } catch (error) {
+            console.log('Not a git repository');
+            versionStatusBarItem.hide();
+        }
+    }
 }
 
 function updateVersionDisplay() {

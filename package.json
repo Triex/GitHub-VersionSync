@@ -15,7 +15,8 @@
     "url": "https://github.com/TriexDev/IDE-Easy-Commit"
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:scm"
   ],
   "contributes": {
     "configuration": {
@@ -38,75 +39,85 @@
         }
       }
     },
+    "commands": [
+      {
+        "command": "extension.versionCommitPatch",
+        "title": "Version: Patch Commit",
+        "category": "Git",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "extension.versionCommitMinor",
+        "title": "Version: Minor Commit",
+        "category": "Git",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "extension.versionCommitMajor",
+        "title": "Version: Major Commit",
+        "category": "Git",
+        "icon": "$(milestone)"
+      },
+      {
+        "command": "extension.customVersion",
+        "title": "Version: Custom...",
+        "category": "Git",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "extension.toggleGitHubRelease",
+        "title": "Version: Toggle GitHub Release",
+        "category": "Git",
+        "icon": "$(repo)"
+      }
+    ],
     "menus": {
       "scm/title": [
         {
           "command": "extension.versionCommitPatch",
-          "when": "scmProvider == git",
-          "group": "navigation"
+          "group": "navigation@1",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
         },
         {
           "command": "extension.versionCommitMinor",
-          "when": "scmProvider == git",
-          "group": "navigation"
+          "group": "navigation@2",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
         },
         {
           "command": "extension.versionCommitMajor",
-          "when": "scmProvider == git",
-          "group": "navigation"
+          "group": "navigation@3",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
+        },
+        {
+          "command": "extension.customVersion",
+          "group": "navigation@4",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "extension.versionCommitPatch",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
+        },
+        {
+          "command": "extension.versionCommitMinor",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
+        },
+        {
+          "command": "extension.versionCommitMajor",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
+        },
+        {
+          "command": "extension.customVersion",
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
         },
         {
           "command": "extension.toggleGitHubRelease",
-          "when": "scmProvider == git",
-          "group": "navigation"
+          "when": "scmProvider == git && gitOpenRepositoryCount != 0"
         }
       ]
-    },
-    "commands": [
-      {
-        "command": "extension.versionCommitPatch",
-        "title": "Patch Version Commit"
-      },
-      {
-        "command": "extension.versionCommitMinor",
-        "title": "Minor Version Commit"
-      },
-      {
-        "command": "extension.versionCommitMajor",
-        "title": "Major Version Commit"
-      },
-      {
-        "command": "extension.customVersion",
-        "title": "Set Custom Version"
-      },
-      {
-        "command": "extension.toggleGitHubRelease",
-        "title": "Toggle GitHub Release"
-      }
-    ]
-  },
-  "commands": [
-    {
-      "command": "extension.versionCommitPatch",
-      "title": "Patch Version Commit"
-    },
-    {
-      "command": "extension.versionCommitMinor",
-      "title": "Minor Version Commit"
-    },
-    {
-      "command": "extension.versionCommitMajor",
-      "title": "Major Version Commit"
-    },
-    {
-      "command": "extension.customVersion",
-      "title": "Set Custom Version"
-    },
-    {
-      "command": "extension.toggleGitHubRelease",
-      "title": "Toggle GitHub Release"
     }
-  ],
+  },
   "main": "./out/extension.js",
   "scripts": {
     "vscode:prepublish": "bun run build",
