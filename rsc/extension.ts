@@ -1,27 +1,27 @@
+import axios from 'axios';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-const VERSION_FILE = 'package.json'; // Adjust this if we want another file
+const VERSION_FILE = 'package.json';
+let enableGitHubRelease = false; // Toggle flag
 
 export function activate(context: vscode.ExtensionContext) {
-    let disposablePatch = vscode.commands.registerCommand('extension.versionCommitPatch', () => {
-        updateVersionAndCommit('patch');
-    });
-
-    let disposableMinor = vscode.commands.registerCommand('extension.versionCommitMinor', () => {
-        updateVersionAndCommit('minor');
-    });
-
-    let disposableMajor = vscode.commands.registerCommand('extension.versionCommitMajor', () => {
-        updateVersionAndCommit('major');
-    });
-
-    context.subscriptions.push(disposablePatch, disposableMinor, disposableMajor);
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.versionCommitPatch', () => updateVersionAndCommit('patch')),
+        vscode.commands.registerCommand('extension.versionCommitMinor', () => updateVersionAndCommit('minor')),
+        vscode.commands.registerCommand('extension.versionCommitMajor', () => updateVersionAndCommit('major')),
+        vscode.commands.registerCommand('extension.toggleGitHubRelease', toggleGitHubRelease)
+    );
 }
 
-function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
+function toggleGitHubRelease() {
+    enableGitHubRelease = !enableGitHubRelease;
+    vscode.window.showInformationMessage(`GitHub Release: ${enableGitHubRelease ? "Enabled" : "Disabled"}`);
+}
+
+async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage("No workspace opened.");
@@ -29,13 +29,11 @@ function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
     }
 
     const packagePath = path.join(workspaceFolders[0].uri.fsPath, VERSION_FILE);
-
     if (!fs.existsSync(packagePath)) {
         vscode.window.showErrorMessage(`${VERSION_FILE} not found in the workspace.`);
         return;
     }
 
-    // Read the package.json and update version
     const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
     const oldVersion = packageJson.version || '1.0.0';
     const newVersion = bumpVersion(oldVersion, type);
@@ -45,9 +43,12 @@ function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
 
     vscode.window.showInformationMessage(`Updated version to ${newVersion}`);
 
-    // Stage the version file and commit
     cp.execSync(`git add ${VERSION_FILE}`);
     cp.execSync(`git commit -m "Bump ${type} version to ${newVersion}"`);
+
+    if (enableGitHubRelease) {
+        await createGitHubRelease(newVersion);
+    }
 }
 
 function bumpVersion(version: string, type: 'patch' | 'minor' | 'major'): string {
@@ -65,6 +66,54 @@ function bumpVersion(version: string, type: 'patch' | 'minor' | 'major'): string
     }
 
     return parts.join('.');
+}
+
+async function createGitHubRelease(newVersion: string) {
+    const repoUrl = cp.execSync('git config --get remote.origin.url').toString().trim();
+    const match = repoUrl.match(/github\.com[:\/](.+)\.git/);
+    if (!match) {
+        vscode.window.showErrorMessage("Not a GitHub repository.");
+        return;
+    }
+    const repo = match[1];
+
+    const lastTag = cp.execSync('git describe --tags --abbrev=0 || echo').toString().trim();
+    const commitMessages = cp.execSync(`git log ${lastTag}..HEAD --pretty=format:"- %h %s (%ci)"`).toString().trim();
+
+    const releaseNotes = await vscode.window.showInputBox({
+        prompt: "Edit Release Notes",
+        value: `### Changes in v${newVersion}\n\n${commitMessages}`,
+    });
+
+    if (!releaseNotes) {
+        vscode.window.showWarningMessage("GitHub release cancelled.");
+        return;
+    }
+
+    const githubToken = process.env.GITHUB_TOKEN;
+    if (!githubToken) {
+        vscode.window.showErrorMessage("GitHub token missing! Set GITHUB_TOKEN in your environment.");
+        return;
+    }
+
+    try {
+        await axios.post(`https://api.github.com/repos/${repo}/releases`, {
+            tag_name: `v${newVersion}`,
+            name: `Version ${newVersion}`,
+            body: releaseNotes,
+            draft: false,
+            prerelease: false
+        }, {
+            headers: {
+                Authorization: `token ${githubToken}`,
+                Accept: 'application/vnd.github.v3+json'
+            }
+        });
+
+        vscode.window.showInformationMessage(`GitHub release v${newVersion} created!`);
+    } catch (error) {
+        vscode.window.showErrorMessage("Failed to create GitHub release: " + error);
+    }
 }
 
 export function deactivate() {}
