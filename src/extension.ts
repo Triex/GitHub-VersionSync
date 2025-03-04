@@ -8,9 +8,8 @@ const EXTENSION_NAME = 'github-versionsync';
 const PACKAGE_JSON = 'package.json';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
-type VersionType = 'major' | 'minor' | 'patch' | 'custom';
+type VersionType = 'major' | 'minor' | 'patch';
 let currentVersionMode: VersionType = 'patch';
-let customVersion: string | undefined;
 let nextVersion: string = '';
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
@@ -80,8 +79,6 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 return `${major}.${minor + 1}.0`;
             case 'patch':
                 return `${major}.${minor}.${patch + 1}`;
-            case 'custom':
-                return customVersion || version;
             default:
                 return version;
         }
@@ -89,7 +86,62 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('GitHub Version Sync is now active!');
+    console.log('Version Control extension is now active!');
+
+    // Create the version provider
+    const versionProvider = new VersionProvider();
+
+    // Register the tree data provider
+    const treeView = vscode.window.createTreeView('scm-version-selector', {
+        treeDataProvider: versionProvider,
+        showCollapseAll: false
+    });
+    context.subscriptions.push(treeView);
+
+    // Get formatted version type for display
+    const getVersionTypeDisplay = (type: VersionType): string => {
+        return type.charAt(0).toUpperCase() + type.slice(1);
+    };
+
+    // Update title when versions change
+    const updateTitle = () => {
+        const currentVersion = versionProvider.getCurrentVersion();
+        const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+        treeView.title = `Version Control (${currentVersion} → ${nextVer}) [${getVersionTypeDisplay(currentVersionMode)}]`;
+    };
+
+    // Initial title update
+    updateTitle();
+
+    // Register version selection command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.selectVersionType', async () => {
+            const items = [
+                { label: '$(arrow-small-right) Patch', description: 'Increment patch version (default)', type: 'patch' as const },
+                { label: '$(arrow-right) Minor', description: 'Increment minor version', type: 'minor' as const },
+                { label: '$(arrow-up) Major', description: 'Increment major version', type: 'major' as const }
+            ];
+
+            const selected = await vscode.window.showQuickPick(items, {
+                placeHolder: 'Select version update type'
+            });
+
+            if (selected) {
+                currentVersionMode = selected.type;
+                const currentVersion = versionProvider.getCurrentVersion();
+                nextVersion = versionProvider.bumpVersion(currentVersion, selected.type);
+                versionProvider.refresh();
+                updateTitle();
+            }
+        })
+    );
+
+    // Register settings command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('extension.openVersionSettings', () => {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'version');
+        })
+    );
 
     // Load configuration
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
@@ -105,81 +157,6 @@ export function activate(context: vscode.ExtensionContext) {
                 enableGitHubRelease = config.get('enableGitHubRelease', false);
                 console.log(`Configuration updated - AutoTag: ${enableAutoTag}, GitHubRelease: ${enableGitHubRelease}`);
             }
-        })
-    );
-
-    // Create the version provider
-    const versionProvider = new VersionProvider();
-
-    // Register the tree data provider
-    const treeView = vscode.window.createTreeView('scm-version-selector', {
-        treeDataProvider: versionProvider,
-        showCollapseAll: false
-    });
-    context.subscriptions.push(treeView);
-
-    // Register the version selection command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('extension.selectVersionType', async () => {
-            const currentVersion = versionProvider.getCurrentVersion();
-            const items: VersionQuickPickItem[] = [
-                new VersionQuickPickItem(
-                    'Major',
-                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'major')}`,
-                    'major'
-                ),
-                new VersionQuickPickItem(
-                    'Minor',
-                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'minor')}`,
-                    'minor'
-                ),
-                new VersionQuickPickItem(
-                    'Patch',
-                    `${currentVersion} → ${versionProvider.bumpVersion(currentVersion, 'patch')}`,
-                    'patch'
-                ),
-                new VersionQuickPickItem(
-                    'Custom',
-                    'Enter custom version',
-                    'custom'
-                )
-            ];
-
-            const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Select version update type'
-            });
-
-            if (selected) {
-                if (selected.type === 'custom') {
-                    const input = await vscode.window.showInputBox({
-                        prompt: "Enter custom version (e.g., 1.2.3)",
-                        value: versionProvider.getCurrentVersion(),
-                        validateInput: (value) => {
-                            return /^\d+\.\d+\.\d+$/.test(value) ? null : 'Please enter a valid version (e.g., 1.2.3)';
-                        }
-                    });
-
-                    if (input) {
-                        currentVersionMode = 'custom';
-                        customVersion = input;
-                        nextVersion = input;
-                        versionProvider.refresh();
-                        updateScmInputBox();
-                    }
-                } else {
-                    currentVersionMode = selected.type;
-                    nextVersion = versionProvider.bumpVersion(versionProvider.getCurrentVersion(), selected.type);
-                    versionProvider.refresh();
-                    updateScmInputBox();
-                }
-            }
-        })
-    );
-
-    // Register settings command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('extension.openVersionSettings', () => {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'github-versionsync');
         })
     );
 
@@ -219,7 +196,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(testButton);
 }
 
-async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custom') {
+async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major') {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         vscode.window.showErrorMessage("No workspace opened.");
@@ -233,7 +210,7 @@ async function updateVersionAndCommit(type: 'patch' | 'minor' | 'major' | 'custo
     }
 
     const currentVersion = getCurrentVersion();
-    const newVersion = type === 'custom' ? (customVersion || currentVersion) : bumpVersion(currentVersion, type);
+    const newVersion = bumpVersion(currentVersion, type);
 
     // Update VERSION file if it exists
     if (fs.existsSync(versionFilePath)) {
@@ -316,11 +293,7 @@ function getVersionFilePath(): string {
     return "";
 }
 
-function bumpVersion(version: string, type: 'patch' | 'minor' | 'major' | 'custom'): string {
-    if (type === 'custom' && customVersion) {
-        return customVersion;
-    }
-
+function bumpVersion(version: string, type: 'patch' | 'minor' | 'major'): string {
     const parts = version.split('.').map(Number);
 
     if (type === 'major') {
