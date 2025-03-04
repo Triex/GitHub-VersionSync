@@ -1,14 +1,64 @@
 {
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
-  "description": "A simple VS Code extension to automatically update version numbers, and create release notes when committing.",
+  "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
   "version": "0.0.1",
   "publisher": "TriexDev",
   "engines": {
     "vscode": "^1.94.0"
   },
   "categories": [
-    "Source Control"
+    "Source Control",
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "version",
+    "github",
+    "release",
+    "semver",
+    "tag"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "badges": [
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/v/TriexDev.github-versionsync",
+      "href": "https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync",
+      "description": "VS Marketplace Version"
+    },
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/d/TriexDev.github-versionsync",
+      "href": "https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync",
+      "description": "VS Marketplace Downloads"
+    }
+  ],
+  "preview": true,
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "This extension requires workspace trust to access Git and GitHub features."
+    }
+  },
+  "features": [
+    {
+      "title": "Automatic Version Management",
+      "description": "One-click version bumping with support for major, minor, and patch updates following semantic versioning."
+    },
+    {
+      "title": "GitHub Release Integration",
+      "description": "Create and publish GitHub releases directly from VS Code with auto-generated release notes."
+    },
+    {
+      "title": "Git Tag Automation",
+      "description": "Automatically create and push Git tags with customizable prefixes when versions are updated."
+    },
+    {
+      "title": "Flexible Configuration",
+      "description": "Customize version file locations, release triggers, and tag formats to match your workflow."
+    }
   ],
   "repository": {
     "type": "git",
