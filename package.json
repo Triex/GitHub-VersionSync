@@ -114,7 +114,7 @@
       "view/item/context": [
         {
           "command": "extension.selectVersionType",
-          "when": "view == scm-version-selector",
+          "when": "view == scm-version-selector && viewItem =~ /^(next|current)$/",
           "group": "inline"
         }
       ]

@@ -39,6 +39,7 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 
         const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
         currentItem.iconPath = new vscode.ThemeIcon('tag');
+        currentItem.contextValue = 'current';
         
         const nextItem = new vscode.TreeItem(`Next: ${nextVer}`, vscode.TreeItemCollapsibleState.None);
         nextItem.iconPath = new vscode.ThemeIcon('arrow-up');
@@ -46,6 +47,7 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
             command: 'extension.selectVersionType',
             title: 'Select Version Type'
         };
+        nextItem.contextValue = 'next';
 
         const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
         const releaseEnabled = config.get('enableGitHubRelease', false);
