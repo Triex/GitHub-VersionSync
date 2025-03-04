@@ -2,7 +2,17 @@
 
 Simplify version management and GitHub releases directly from VS Code. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
+<div align="center">
+
 ![Version Control Panel](images/version-panel.png)
+
+*Version control panel with one-click version bumping and GitHub release creation*
+
+![Release Creation](images/release-creation.png)
+
+*Create beautiful GitHub releases with auto-generated notes from your commits*
+
+</div>
 
 ---
 
