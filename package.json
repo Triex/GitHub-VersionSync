@@ -117,42 +117,53 @@
     "viewsWelcome": [
       {
         "view": "scm-version-selector",
-        "contents": "Select a version type to start managing versions.\n[Select Version Type](command:extension.selectVersionType)",
+        "contents": "Select a version type to start managing versions.\n[Select Version Type](command:github-versionsync.selectVersionType)",
         "when": "git.state == initialized"
       }
     ],
     "commands": [
       {
-        "command": "extension.selectVersionType",
+        "command": "github-versionsync.test",
+        "title": "Test Command System",
+        "category": "Version Control"
+      },
+      {
+        "command": "github-versionsync.selectVersionType",
         "title": "Select Version Type",
         "icon": "$(versions)",
         "category": "Version Control"
       },
       {
-        "command": "extension.openVersionSettings",
+        "command": "github-versionsync.openVersionSettings",
         "title": "Version Settings",
         "icon": "$(gear)",
         "category": "Version Control"
       },
       {
-        "command": "extension.toggleGitHubRelease",
+        "command": "github-versionsync.toggleGitHubRelease",
         "title": "Toggle GitHub Releases",
         "icon": "$(github)",
         "category": "Version Control"
       },
       {
-        "command": "extension.createOneOffRelease",
+        "command": "github-versionsync.createOneOffRelease",
         "title": "Create GitHub Release",
         "icon": "$(github)",
         "category": "Version Control"
+      },
+      {
+        "command": "github-versionsync.preCommit",
+        "title": "Commit with Version",
+        "category": "Version Control",
+        "icon": "$(git-commit)"
       }
     ],
     "keybindings": [
       {
-        "command": "extension.preCommit",
+        "command": "github-versionsync.preCommit",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "gitInputBox.visible && !inDebugRepl && !renameInputVisible && !terminalFocus"
+        "when": "scmInputBoxFocus && scmRepository"
       }
     ],
     "configuration": {
@@ -224,35 +235,52 @@
           "type": "boolean",
           "default": true,
           "description": "Show confirmation dialog before updating version during commit"
+        },
+        "github-versionsync.versionFormat": {
+          "type": "string",
+          "default": "arrow",
+          "enum": [
+            "arrow",
+            "bump",
+            "simple",
+            "release",
+            "brackets"
+          ],
+          "description": "Format for version in commit messages: arrow (→), bump (⇧), simple (v), release (📦), or brackets ((v))"
         }
       }
     },
     "menus": {
       "scm/title": [
         {
-          "command": "extension.openVersionSettings",
+          "command": "github-versionsync.openVersionSettings",
           "group": "navigation"
         },
         {
-          "command": "extension.selectVersionType",
+          "command": "github-versionsync.selectVersionType",
           "group": "1_version@1"
         },
         {
-          "command": "extension.toggleGitHubRelease",
+          "command": "github-versionsync.toggleGitHubRelease",
           "group": "navigation"
+        },
+        {
+          "command": "github-versionsync.preCommit",
+          "group": "main",
+          "when": "scmProvider == git"
         }
       ],
       "view/title": [
         {
-          "command": "extension.selectVersionType",
+          "command": "github-versionsync.selectVersionType",
           "when": "view == scm-version-selector",
           "group": "navigation"
         }
       ],
       "scm/resourceState/context": [
         {
-          "command": "extension.preCommit",
-          "when": "scmProvider == git && gitInputBox.visible",
+          "command": "github-versionsync.preCommit",
+          "when": "scmProvider == git",
           "group": "inline"
         }
       ]
