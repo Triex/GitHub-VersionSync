@@ -132,12 +132,16 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 
                 // Reset the cached version to force recalculation
                 this.lastCalculatedVersion = undefined;
+                lastCalculatedVersion = undefined; // Reset global version cache too
                 nextVersion = '';
                 
                 console.log(`Updated package.json version from ${oldVersion} to ${version}`);
                 
                 // Only set shouldUpdateVersion to true when we've actually updated the version
                 shouldUpdateVersion = true;
+                
+                // Force a refresh of the UI after version update
+                setTimeout(() => this.refresh(), 100);
             } else {
                 console.log(`Version ${version} already set in package.json, no update needed`);
             }
@@ -168,7 +172,7 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         // Always get the current version directly to ensure it's up-to-date
         const currentVersion = this.getCurrentVersion();
         
-        // Only calculate next version if it hasn't been calculated or if version type changed
+        // Calculate next version if needed
         if (!lastCalculatedVersion || nextVersion === '' || lastCalculatedVersion !== currentVersion) {
             nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
             lastCalculatedVersion = currentVersion;
@@ -804,10 +808,13 @@ index 0000000..0000000 100644
             console.log(`Version already at ${version}, no update needed`);
         }
         
-        // Only set shouldUpdateVersion to true when we've actually updated the version
-        if (packageJson.version !== version) {
-            shouldUpdateVersion = true;
-        }
+        // Reset version state after update
+        lastCalculatedVersion = undefined;
+        nextVersion = '';
+        
+        // Force a refresh of the version provider
+        const versionProvider = new VersionProvider();
+        versionProvider.refresh();
     } catch (error: any) {
         console.error('Error updating version after commit:', error);
         vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
