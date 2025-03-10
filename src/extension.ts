@@ -18,6 +18,8 @@ let shouldUpdateVersion = false; // Flag to control version updates during commi
 let lastCalculatedVersion: string | undefined;  // Track last calculated version
 let isRefreshing = false;
 let versionStatusBarItem: vscode.StatusBarItem;
+let versionProvider: VersionProvider;  // Make versionProvider globally accessible
+let treeView: vscode.TreeView<vscode.TreeItem>; // Make treeView globally accessible
 
 // Add back the execAsync function
 async function execAsync(command: string, options: cp.ExecOptions): Promise<string> {
@@ -30,6 +32,53 @@ async function execAsync(command: string, options: cp.ExecOptions): Promise<stri
             }
         });
     });
+}
+
+// Get formatted version type for display
+function getVersionTypeDisplay(type: VersionType): string {
+    if (type === 'none') return 'No Change';
+    return type === 'custom' ? 'Custom' : type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+// Update title when versions change
+function updateTitle() {
+    if (!treeView || !versionProvider) return;
+    
+    const currentVersion = versionProvider.getCurrentVersion();
+    nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    lastCalculatedVersion = nextVersion;
+    
+    // Keep the main title simple
+    treeView.title = 'Version Control';
+    
+    // Show version details in the description
+    treeView.description = currentVersionMode === 'none' ? 
+        `${currentVersion} [No Change]` :
+        `${currentVersion} → ${nextVersion} [${getVersionTypeDisplay(currentVersionMode)}]`;
+    
+    if (versionProvider) {
+        versionProvider.updateInputBox();
+    }
+    
+    // Force a refresh of the tree view
+    vscode.commands.executeCommand('workbench.action.refreshTree');
+}
+
+// Update status bar with current version mode
+function updateVersionStatusBar() {
+    if (!versionStatusBarItem) return;
+    
+    const modeEmojis: Record<string, string> = {
+        'patch': '🐛',
+        'minor': '✨',
+        'major': '💥',
+        'none': '⛔',
+        'custom': '✏️'
+    };
+    
+    versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
+    versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
+    versionStatusBarItem.show();
 }
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
@@ -140,8 +189,16 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 // Only set shouldUpdateVersion to true when we've actually updated the version
                 shouldUpdateVersion = true;
                 
-                // Force a refresh of the UI after version update
-                setTimeout(() => this.refresh(), 100);
+                // Force a refresh of the UI after version update with a small delay
+                setTimeout(() => {
+                    this.refresh();
+                    
+                    // Update UI components after refresh
+                    setTimeout(() => {
+                        updateVersionStatusBar();
+                        updateTitle();
+                    }, 50);
+                }, 100);
             } else {
                 console.log(`Version ${version} already set in package.json, no update needed`);
             }
@@ -158,7 +215,11 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         if (isRefreshing) return;
         isRefreshing = true;
         try {
+            console.log('Refreshing version provider tree view');
             this._onDidChangeTreeData.fire();
+            
+            // Force VS Code to refresh the tree view
+            vscode.commands.executeCommand('workbench.action.refreshTree');
         } finally {
             isRefreshing = false;
         }
@@ -813,8 +874,17 @@ index 0000000..0000000 100644
         nextVersion = '';
         
         // Force a refresh of the version provider
-        const versionProvider = new VersionProvider();
         versionProvider.refresh();
+        
+        // Update UI components after refresh
+        setTimeout(() => {
+            if (versionStatusBarItem) {
+                updateVersionStatusBar();
+            }
+            if (treeView) {
+                updateTitle();
+            }
+        }, 150);
     } catch (error: any) {
         console.error('Error updating version after commit:', error);
         vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
@@ -845,7 +915,7 @@ export async function activate(context: vscode.ExtensionContext) {
     console.log('Activating github-versionsync extension');
 
     // Create the version provider and initialize state
-    const versionProvider = new VersionProvider();
+    versionProvider = new VersionProvider();
     console.log('Version provider created');
 
     // Load configuration once at the top
@@ -914,6 +984,11 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (!message.match(/v\d+\.\d+\.\d+/)) {
                     versionProvider.updateInputBox();
                 }
+                
+                // Force UI refresh
+                updateVersionStatusBar();
+                updateTitle();
+                versionProvider.refresh();
             }, 300);
 
             // Track last processed message to prevent duplicate processing
@@ -1069,8 +1144,12 @@ index 0000000..0000000 100644
                     vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
                 } finally {
                     isCommitting = false;
-                    // We don't want to set shouldUpdateVersion to true here unconditionally
-                    // as it might lead to unexpected behavior
+                    // Force a refresh after commit is complete
+                    setTimeout(() => {
+                        versionProvider.refresh();
+                        updateVersionStatusBar();
+                        updateTitle();
+                    }, 150);
                 }
             });
 
@@ -1124,30 +1203,8 @@ index 0000000..0000000 100644
     });
     context.subscriptions.push(testCommand);
 
-    // Get formatted version type for display
-    const getVersionTypeDisplay = (type: VersionType): string => {
-        if (type === 'none') return 'No Change';
-        return type === 'custom' ? 'Custom' : type.charAt(0).toUpperCase() + type.slice(1);
-    };
-
-    // Update title when versions change
-    const updateTitle = () => {
-        const currentVersion = versionProvider.getCurrentVersion();
-        nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
-        lastCalculatedVersion = nextVersion;
-        
-        // Keep the main title simple
-        treeView.title = 'Version Control';
-        
-        // Show version details in the description
-        treeView.description = currentVersionMode === 'none' ? 
-            `${currentVersion} [No Change]` :
-            `${currentVersion} → ${nextVersion} [${getVersionTypeDisplay(currentVersionMode)}]`;
-        versionProvider.updateInputBox();
-    };
-
     // Create and register the tree view
-    const treeView = vscode.window.createTreeView('scm-version-selector', {
+    treeView = vscode.window.createTreeView('scm-version-selector', {
         treeDataProvider: versionProvider,
         showCollapseAll: false
     });
@@ -1160,26 +1217,11 @@ index 0000000..0000000 100644
     updateTitle();
 
     // Create status bar item
-    const versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     versionStatusBarItem.command = 'github-versionsync.selectVersionType';
     context.subscriptions.push(versionStatusBarItem);
 
     // Update status bar with current version mode
-    function updateVersionStatusBar() {
-        const modeEmojis: Record<string, string> = {
-            'patch': '🐛',
-            'minor': '✨',
-            'major': '💥',
-            'none': '⛔',
-            'custom': '✏️'
-        };
-        
-        versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
-        versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
-        versionStatusBarItem.show();
-    }
-
-    // Initial status bar update
     updateVersionStatusBar();
 
     // Register version selection command
@@ -1233,7 +1275,11 @@ index 0000000..0000000 100644
                 console.log('Updating title');
                 updateTitle();
                 console.log('Refreshing version provider');
-                versionProvider.refresh();
+                
+                // Add a delay before refreshing to ensure all state changes are processed
+                setTimeout(() => {
+                    versionProvider.refresh();
+                }, 100);
             }
         })
     );
