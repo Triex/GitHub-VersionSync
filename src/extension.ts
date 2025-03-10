@@ -55,10 +55,14 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     getCurrentVersion(): string {
-        if (!this.lastCalculatedVersion) {
+        // Always read the current version from package.json to ensure we have the latest
+        const version = getCurrentVersion();
+        if (!version) {
             return '0.1.0';
         }
-        return this.lastCalculatedVersion;
+        // Update the cached version
+        this.lastCalculatedVersion = version;
+        return version;
     }
 
     bumpVersion(version: string, type: VersionType = 'patch'): string {
@@ -131,6 +135,9 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 nextVersion = '';
                 
                 console.log(`Updated package.json version from ${oldVersion} to ${version}`);
+                
+                // Only set shouldUpdateVersion to true when we've actually updated the version
+                shouldUpdateVersion = true;
             } else {
                 console.log(`Version ${version} already set in package.json, no update needed`);
             }
@@ -158,12 +165,13 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     async getChildren(): Promise<vscode.TreeItem[]> {
+        // Always get the current version directly to ensure it's up-to-date
         const currentVersion = this.getCurrentVersion();
         
         // Only calculate next version if it hasn't been calculated or if version type changed
-        if (!lastCalculatedVersion || nextVersion === '') {
+        if (!lastCalculatedVersion || nextVersion === '' || lastCalculatedVersion !== currentVersion) {
             nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
-            lastCalculatedVersion = nextVersion;
+            lastCalculatedVersion = currentVersion;
         }
 
         // Reset shouldUpdateVersion flag after tree refresh
@@ -651,11 +659,11 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
         return;
     }
 
-    // Only proceed if explicitly requested through commit
-    if (!shouldUpdateVersion) {
-        console.log('Version update not requested, skipping');
-        return;
-    }
+    // We'll remove this check since we're going to manage the flag more carefully
+    // if (!shouldUpdateVersion) {
+    //     console.log('Version update not requested, skipping');
+    //     return;
+    // }
 
     isUpdatingVersion = true;
     try {
@@ -712,9 +720,6 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 }
             }
             
-            // Save the original content before updating
-            const originalContent = fs.readFileSync(packageJsonPath, 'utf-8');
-            
             // Update version in package.json
             packageJson.version = version;
             const updatedContent = JSON.stringify(packageJson, null, 2);
@@ -730,7 +735,7 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 const patchFile = path.join(workspaceFolders[0].uri.fsPath, '.version-patch');
                 
                 // Get the line number for the version in package.json
-                const originalLines = originalContent.split('\n');
+                const originalLines = fs.readFileSync(packageJsonPath, 'utf-8').split('\n');
                 const updatedLines = updatedContent.split('\n');
                 let versionLineNumber = -1;
                 
@@ -797,6 +802,11 @@ index 0000000..0000000 100644
             }
         } else {
             console.log(`Version already at ${version}, no update needed`);
+        }
+        
+        // Only set shouldUpdateVersion to true when we've actually updated the version
+        if (packageJson.version !== version) {
+            shouldUpdateVersion = true;
         }
     } catch (error: any) {
         console.error('Error updating version after commit:', error);
@@ -1046,6 +1056,8 @@ index 0000000..0000000 100644
                     vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
                 } finally {
                     isCommitting = false;
+                    // We don't want to set shouldUpdateVersion to true here unconditionally
+                    // as it might lead to unexpected behavior
                 }
             });
 
