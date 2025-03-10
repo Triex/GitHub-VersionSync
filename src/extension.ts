@@ -777,7 +777,7 @@ index 0000000..0000000 100644
                     console.log('Applied patch to stage only version change');
                     
                     // Amend the commit with the new message
-                    await execAsync(`git commit --amend -m "${version}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                    await execAsync(`git commit --amend -m "${escapeCommitMessage(version)}"`, { cwd: workspaceFolders[0].uri.fsPath });
                     
                     console.log('Updated version in package.json to:', version);
                     vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
@@ -789,7 +789,7 @@ index 0000000..0000000 100644
                     await execAsync('git add package.json', { cwd: workspaceFolders[0].uri.fsPath });
                     
                     // Amend the commit with the new message
-                    await execAsync(`git commit --amend -m "${version}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                    await execAsync(`git commit --amend -m "${escapeCommitMessage(version)}"`, { cwd: workspaceFolders[0].uri.fsPath });
                     
                     console.log('Updated version in package.json to:', version);
                     vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
@@ -821,6 +821,12 @@ index 0000000..0000000 100644
     } finally {
         isUpdatingVersion = false;
     }
+}
+
+// Add a helper function to escape backticks in commit messages
+function escapeCommitMessage(message: string): string {
+    // Replace backticks with escaped backticks for shell execution
+    return message.replace(/`/g, '\\`');
 }
 
 function debounce(func: Function, wait: number) {
@@ -1030,7 +1036,7 @@ index 0000000..0000000 100644
                                 console.log('Applied patch to stage only version change');
                                 
                                 // Amend the commit with the new message
-                                await execAsync(`git commit --amend -m "${newMessage}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { cwd: workspaceFolders[0].uri.fsPath });
                                 
                                 console.log('Updated version in package.json to:', nextVer);
                                 vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${nextVer}`);
@@ -1042,7 +1048,7 @@ index 0000000..0000000 100644
                                 await execAsync('git add package.json', { cwd: workspaceFolders[0].uri.fsPath });
                                 
                                 // Amend the commit with the new message
-                                await execAsync(`git commit --amend -m "${newMessage}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { cwd: workspaceFolders[0].uri.fsPath });
                                 
                                 console.log('Updated version in package.json to:', nextVer);
                                 vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${nextVer}`);
