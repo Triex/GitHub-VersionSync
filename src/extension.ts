@@ -1,7 +1,6 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import { Octokit } from 'octokit';
-import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChangelogGenerator, EXTENSION_NAME } from './changelog';
@@ -95,9 +94,17 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
     private lastCalculatedVersion?: string;
     private currentRepo?: any;
+    private initialized = false;
 
     constructor() {
         this.lastCalculatedVersion = undefined;
+        
+        // Add a delayed initialization to handle extension host reload scenarios
+        setTimeout(() => {
+            this.initialized = true;
+            console.log('VersionProvider delayed initialization complete');
+            this.refresh();
+        }, 200);
     }
 
     setCurrentRepo(repo: any) {
@@ -251,103 +258,138 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     refresh(): void {
-        if (isRefreshing) return;
-        isRefreshing = true;
+        if (isRefreshing) {
+            return; // Prevent recursive refreshes
+        }
+        
         try {
-            console.log('Refreshing version provider tree view');
+            isRefreshing = true;
             this._onDidChangeTreeData.fire();
+            
+            // Update UI components after refresh
+            updateVersionStatusBar();
+            updateTitle();
+        } catch (error) {
+            console.error('Error refreshing tree view:', error);
         } finally {
             isRefreshing = false;
         }
-    }
-
-    getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
-        return element;
     }
 
     async getChildren(): Promise<vscode.TreeItem[]> {
         // Always get the current version directly to ensure it's up-to-date
         const currentVersion = this.getCurrentVersion();
         
-        // Calculate next version if needed
-        if (!lastCalculatedVersion || nextVersion === '' || lastCalculatedVersion !== currentVersion) {
-            nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
-            lastCalculatedVersion = currentVersion;
-        }
-
-        // Reset shouldUpdateVersion flag after tree refresh
-        shouldUpdateVersion = false;
-
-        const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
-        currentItem.iconPath = new vscode.ThemeIcon('tag');
-        currentItem.contextValue = 'current';
-        
-        // Enhanced version mode visibility in tree view
-        const modeIcons = {
-            'patch': 'bug',
-            'minor': 'package',
-            'major': 'versions',
-            'none': 'close',
-            'custom': 'edit'
-        };
-        
-        const modeDescriptions = {
-            'patch': '(bug fixes)',
-            'minor': '(new features)',
-            'major': '(breaking changes)',
-            'none': '(no version change)',
-            'custom': '(custom version)'
-        };
-        
-        const nextItem = new vscode.TreeItem(
-            `Next: ${nextVersion} [${currentVersionMode} ${modeDescriptions[currentVersionMode]}]`, 
-            vscode.TreeItemCollapsibleState.None
-        );
-        nextItem.iconPath = new vscode.ThemeIcon(modeIcons[currentVersionMode]);
-        nextItem.command = {
-            command: 'github-versionsync.selectVersionType',
-            title: 'Select Version Type'
-        };
-        nextItem.contextValue = 'next';
-
-        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-        const releaseEnabled = config.get('enableGitHubRelease', false);
-        const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
-        
-        // Check GitHub authentication status
-        const token = await getGitHubToken();
-
-        // Create GitHub Release item
-        const githubItem = new vscode.TreeItem('Create GitHub Release', vscode.TreeItemCollapsibleState.None);
-        githubItem.iconPath = new vscode.ThemeIcon('github');
-        githubItem.command = {
-            command: 'github-versionsync.createOneOffRelease',
-            title: 'Create GitHub Release'
-        };
-
-        // Create Auto-Release Settings item
-        const autoReleaseItem = new vscode.TreeItem('Auto-Release Settings', vscode.TreeItemCollapsibleState.None);
-        autoReleaseItem.command = {
-            command: 'github-versionsync.toggleGitHubRelease',
-            title: 'Toggle Automatic GitHub Releases'
-        };
-
-        if (!token) {
-            githubItem.description = '⚠️ Sign in Required';
-            githubItem.tooltip = 'Click to sign in to GitHub';
-            autoReleaseItem.description = '⚠️ Sign in Required';
-        } else {
-            githubItem.tooltip = 'Create a GitHub release for the current version';
-            if (releaseEnabled) {
-                autoReleaseItem.description = `Auto: ${releaseOn.join('/')}`;
-                autoReleaseItem.tooltip = `Automatic releases enabled for ${releaseOn.join('/')} versions`;
-            } else {
-                autoReleaseItem.description = 'Auto: Off';
-                autoReleaseItem.tooltip = 'Automatic releases are disabled';
+        try {
+            // Calculate next version if needed
+            if (!lastCalculatedVersion || nextVersion === '' || lastCalculatedVersion !== currentVersion) {
+                nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
+                lastCalculatedVersion = currentVersion;
             }
+    
+            // Reset shouldUpdateVersion flag after tree refresh
+            shouldUpdateVersion = false;
+    
+            const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
+            currentItem.iconPath = new vscode.ThemeIcon('tag');
+            currentItem.contextValue = 'current';
+            
+            // Enhanced version mode visibility in tree view
+            const modeIcons = {
+                'patch': 'bug',
+                'minor': 'package',
+                'major': 'versions',
+                'none': 'close',
+                'custom': 'edit'
+            };
+            
+            const modeDescriptions = {
+                'patch': '(bug fixes)',
+                'minor': '(new features)',
+                'major': '(breaking changes)',
+                'none': '(no version change)',
+                'custom': '(custom version)'
+            };
+            
+            const nextItem = new vscode.TreeItem(
+                `Next: ${nextVersion} [${currentVersionMode} ${modeDescriptions[currentVersionMode]}]`, 
+                vscode.TreeItemCollapsibleState.None
+            );
+            nextItem.iconPath = new vscode.ThemeIcon(modeIcons[currentVersionMode]);
+            nextItem.command = {
+                command: 'github-versionsync.selectVersionType',
+                title: 'Select Version Type'
+            };
+            nextItem.contextValue = 'next';
+    
+            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+            const releaseEnabled = config.get('enableGitHubRelease', false);
+            const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
+            
+            // Create GitHub Release item
+            const githubItem = new vscode.TreeItem('Create GitHub Release', vscode.TreeItemCollapsibleState.None);
+            githubItem.iconPath = new vscode.ThemeIcon('github');
+            githubItem.command = {
+                command: 'github-versionsync.createOneOffRelease',
+                title: 'Create GitHub Release'
+            };
+    
+            // Create Auto-Release Settings item
+            const autoReleaseItem = new vscode.TreeItem('Auto-Release Settings', vscode.TreeItemCollapsibleState.None);
+            autoReleaseItem.command = {
+                command: 'github-versionsync.toggleGitHubRelease',
+                title: 'Toggle Automatic GitHub Releases'
+            };
+    
+            // Check GitHub authentication status
+            let token: any;
+            try {
+                token = await getGitHubToken();
+            } catch (error) {
+                console.error('Failed to get GitHub token during tree view refresh:', error);
+                // Continue without the token - we'll handle this in the UI
+            }
+    
+            if (!token) {
+                githubItem.description = '⚠️ Sign in Required';
+                githubItem.tooltip = 'Click to sign in to GitHub';
+                autoReleaseItem.description = '⚠️ Sign in Required';
+            } else {
+                githubItem.tooltip = 'Create a GitHub release for the current version';
+                if (releaseEnabled) {
+                    autoReleaseItem.description = `Auto: ${releaseOn.join('/')}`;
+                    autoReleaseItem.tooltip = `Automatic releases enabled for ${releaseOn.join('/')} versions`;
+                } else {
+                    autoReleaseItem.description = 'Auto: Off';
+                    autoReleaseItem.tooltip = 'Automatic releases are disabled';
+                }
+            }
+    
+            return [currentItem, nextItem, githubItem, autoReleaseItem];
+        } catch (error) {
+            console.error('Error in getChildren:', error);
+            
+            // Provide basic items even in error case to prevent UI from being empty
+            const errorItem = new vscode.TreeItem('Error loading version info');
+            errorItem.tooltip = 'Click to refresh';
+            errorItem.command = {
+                command: 'github-versionsync.refreshTreeView',
+                title: 'Refresh Tree View'
+            };
+            
+            const selectItem = new vscode.TreeItem('Select version type');
+            selectItem.tooltip = 'Choose version increment type';
+            selectItem.command = {
+                command: 'github-versionsync.selectVersionType',
+                title: 'Select Version Type'
+            };
+            
+            return [errorItem, selectItem];
         }
+    }
 
-        return [currentItem, nextItem, githubItem, autoReleaseItem];
+    getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+        return element;
     }
 }
 
@@ -926,52 +968,99 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
         return;
     }
 
-    // We'll remove this check since we're going to manage the flag more carefully
-    // if (!shouldUpdateVersion) {
-    //     console.log('Version update not requested, skipping');
-    //     return;
-    // }
-
     isUpdatingVersion = true;
+    console.log(`Starting version update to ${version} (type: ${type})`);
+    
     try {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
-            throw new Error('No workspace folder found');
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
         }
-
+        
         const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
         if (!fs.existsSync(packageJsonPath)) {
-            throw new Error('package.json not found');
+            vscode.window.showErrorMessage('No package.json found in workspace root');
+            return;
         }
-
-        // Read the current package.json
-        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
         
-        // Only update if the version is actually different
-        if (packageJson.version !== version) {
-            // Store old version for comparison
-            const oldVersion = packageJson.version;
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        const oldVersion = packageJson.version;
+        
+        if (oldVersion === version) {
+            console.log(`Version is already ${version}, no update needed`);
+            return;
+        }
+        
+        // Store stash result to check if we created a stash
+        let stashCreated = false;
+        
+        try {
+            // Check if git is available and initialized
+            const gitStatusResult = await execAsync('git rev-parse --is-inside-work-tree', { cwd: workspaceFolders[0].uri.fsPath }).catch(() => '');
             
-            // Create git tag if enabled and this is a new version
-            if (enableAutoTag && version !== oldVersion) {
-                try {
-                    // Check if remote exists first
-                    const remotes = await execAsync('git remote', { cwd: workspaceFolders[0].uri.fsPath });
-                    const hasOrigin = remotes.split('\n').some(remote => remote.trim() === 'origin');
+            if (gitStatusResult.trim() === 'true') {
+                // We're in a git repo
+                
+                // Check if there are changes to package.json first
+                const gitStatus = await execAsync('git status --porcelain package.json', { cwd: workspaceFolders[0].uri.fsPath });
+                
+                if (gitStatus.trim() !== '') {
+                    // There are changes, stash them first
+                    console.log('Found uncommitted changes to package.json, stashing first');
                     
-                    // Check if tag already exists
                     try {
-                        await execAsync(`git rev-parse v${version}`, { cwd: workspaceFolders[0].uri.fsPath });
-                        // If we get here, tag exists
-                        console.log(`Tag v${version} already exists, skipping tag creation`);
-                        vscode.window.showInformationMessage(`Tag v${version} already exists`);
-                    } catch {
-                        // Tag doesn't exist, create it
-                        await execAsync(`git tag v${version}`, { cwd: workspaceFolders[0].uri.fsPath });
+                        await execAsync('git stash push -m "Stashed by GitHub-Version-Sync extension" package.json', { cwd: workspaceFolders[0].uri.fsPath });
+                        stashCreated = true;
+                        console.log('Successfully stashed changes to package.json');
+                    } catch (stashError: any) {
+                        console.error('Failed to stash changes:', stashError);
+                        vscode.window.showErrorMessage(`Failed to stash changes: ${stashError.message}`);
+                        // Continue anyway, we'll try to update the version
+                    }
+                }
+                
+                // Update version in package.json
+                packageJson.version = version;
+                fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                console.log(`Updated package.json with only version change from ${oldVersion} to ${version}`);
+                
+                // Reset the cached version to force recalculation
+                if (extensionState.versionProvider) {
+                    extensionState.versionProvider.lastCalculatedVersion = undefined;
+                }
+                lastCalculatedVersion = undefined; // Reset global version cache too
+                nextVersion = '';
+                
+                // Only set shouldUpdateVersion to true when we've actually updated the version
+                shouldUpdateVersion = true;
+                
+                // Force a refresh of the UI after version update with a small delay
+                setTimeout(() => {
+                    if (extensionState.versionProvider) {
+                        extensionState.versionProvider.refresh();
+                    }
+                    
+                    // Update UI components after refresh
+                    setTimeout(() => {
+                        updateVersionStatusBar();
+                    }, 100);
+                }, 200);
+                
+                // If we have created a tag, push it to remote origin
+                if (enableAutoTag && type !== 'none') {
+                    try {
+                        // Check if we have an origin remote
+                        const remotes = await execAsync('git remote', { cwd: workspaceFolders[0].uri.fsPath });
+                        const hasOrigin = remotes.split('\n').some(remote => remote.trim() === 'origin');
                         
-                        // Only try to push if we have a remote origin
+                        // Create a tag
+                        await execAsync(`git tag -a v${version} -m "Version ${version}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                        console.log(`Created git tag v${version}`);
+                        
                         if (hasOrigin) {
                             try {
+                                // Push the tag to origin
                                 await execAsync('git push origin --tags', { cwd: workspaceFolders[0].uri.fsPath });
                             } catch (error: any) {
                                 console.error('Failed to push tags:', error);
@@ -980,115 +1069,60 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                         } else {
                             vscode.window.showInformationMessage('Created local tag. No remote "origin" configured for pushing tags.');
                         }
+                    } catch (tagError: any) {
+                        console.error('Failed to create tag:', tagError);
+                        vscode.window.showErrorMessage(`Failed to create git tag: ${tagError.message}`);
                     }
-                } catch (error: any) {
-                    console.error('Failed to create tag:', error);
-                    vscode.window.showErrorMessage(`Failed to create tag v${version}: ${error.message}`);
                 }
+                
+                vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
+            } else {
+                // Not in a git repo, just update package.json
+                packageJson.version = version;
+                fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                console.log(`Updated package.json with only version change to ${version}`);
+                
+                // Reset the cached version to force recalculation
+                if (extensionState.versionProvider) {
+                    extensionState.versionProvider.lastCalculatedVersion = undefined;
+                }
+                lastCalculatedVersion = undefined; // Reset global version cache too
+                nextVersion = '';
+                
+                // Only set shouldUpdateVersion to true when we've actually updated the version
+                shouldUpdateVersion = true;
+                
+                // Force a refresh of the UI after version update
+                setTimeout(() => {
+                    if (extensionState.versionProvider) {
+                        extensionState.versionProvider.refresh();
+                    }
+                    
+                    // Update UI components after refresh
+                    setTimeout(() => {
+                        updateVersionStatusBar();
+                    }, 100);
+                }, 200);
+                
+                vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
             }
-            
-            console.log('Updating version in git repo:', workspaceFolders[0].uri.fsPath);
-            console.log('Relative path to package.json:', packageJsonPath);
-            
-            try {
-                // First check if there are any other changes to package.json
-                // If so, we need to stash them first so we only commit version changes
-                const hasChanges = await execAsync(`git diff --quiet -- "${packageJsonPath}" || echo "changes"`, { 
-                    cwd: workspaceFolders[0].uri.fsPath 
-                });
-                
-                let needsStash = hasChanges.trim() === "changes";
-                let stashCreated = false;
-                
-                if (needsStash) {
-                    console.log('Detected other changes to package.json, stashing before version update');
-                    // Stash only the package.json changes
-                    await execAsync(`git stash push -m "temp stash for version change" -- "${packageJsonPath}"`, { 
-                        cwd: workspaceFolders[0].uri.fsPath 
-                    });
-                    stashCreated = true;
-                    console.log('Stashed other changes to package.json');
-                }
-                
+        } finally {
+            // If we stashed changes, pop them back
+            if (stashCreated) {
                 try {
-                    // Now read the current package.json without other pending changes
-                    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-                    const oldVersion = packageJson.version;
-                    
-                    // Update only the version
-                    packageJson.version = version;
-                    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-                    console.log(`Updated package.json with only version change to ${version}`);
-                    
-                    // Stage only the package.json file
-                    await execAsync(`git add "${packageJsonPath}"`, { cwd: workspaceFolders[0].uri.fsPath });
-                    console.log(`Staged ${packageJsonPath} with version change only`);
-                    
-                    // Show what's staged
-                    const diffCachedCmd = 'git diff --cached';
-                    const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolders[0].uri.fsPath });
-                    console.log('Staged changes:', stagedChanges);
-                    
-                    // Get the current commit message
-                    const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolders[0].uri.fsPath });
-                    
-                    // Create updated commit message with version info if not already present
-                    let newMessage = commitMsg.trim();
-                    if (!newMessage.includes(`v${version}`)) {
-                        // Add version to commit message using a clean format
-                        const versionFormats = {
-                            'arrow': `${newMessage} → v${version}`,
-                            'bump': `${newMessage} ⇧ v${version}`,
-                            'simple': `${newMessage} v${version}`,
-                            'release': `${newMessage} 📦 v${version}`,
-                            'brackets': `${newMessage} (v${version})`
-                        };
-                        
-                        const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
-                        newMessage = versionFormats[format] || versionFormats.simple;
-                    }
-                    
-                    console.log('Amending commit with message:', newMessage);
-                    // Amend the commit with the updated message
-                    await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { 
-                        cwd: workspaceFolders[0].uri.fsPath 
-                    });
-                    
-                    console.log('Updated version in package.json to:', version);
-                    vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
-                    
-                } finally {
-                    // If we stashed changes, pop them back
-                    if (stashCreated) {
-                        console.log('Restoring stashed changes to package.json');
-                        try {
-                            await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
-                            console.log('Successfully restored stashed changes');
-                        } catch (stashError) {
-                            console.error('Failed to restore stashed changes - may need manual intervention:', stashError);
-                            vscode.window.showWarningMessage(
-                                'Version update succeeded, but there were conflicts restoring other package.json changes. ' +
-                                'You may need to resolve these manually with `git stash pop`.'
-                            );
-                        }
-                    }
+                    console.log('Popping stashed changes back');
+                    await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
+                } catch (popError: any) {
+                    console.error('Failed to pop stashed changes:', popError);
+                    vscode.window.showErrorMessage(`Failed to restore your stashed changes: ${popError.message}. You may need to manually run 'git stash pop'.`);
                 }
-            } catch (error: any) {
-                console.error('Error updating version:', error);
-                vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
             }
         }
     } catch (error: any) {
-        console.error('Error updating version after commit:', error);
+        console.error('Error updating version:', error);
         vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
     } finally {
         isUpdatingVersion = false;
-        // Force a refresh after commit is complete
-        setTimeout(() => {
-            extensionState.versionProvider.refresh();
-            updateVersionStatusBar();
-            updateTitle();
-        }, 150);
     }
 }
 
@@ -1115,23 +1149,57 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize extension state with context
     extensionState.initialize(context);
-    console.log('Extension state initialized');
 
     // Create the version provider and initialize state
     extensionState.versionProvider = new VersionProvider();
-    console.log('Version provider created');
-
+    
     // Load configuration once at the top
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    enableAutoTag = config.get('enableAutoTag', true);
     enableGitHubRelease = config.get('enableGitHubRelease', false);
-    console.log('Configuration loaded:', { enableAutoTag, enableGitHubRelease });
+    enableAutoTag = config.get('enableAutoTag', true);
 
     // Initialize version state
     currentVersionMode = 'patch'; // Default to patch
     let currentVersion = extensionState.versionProvider.getCurrentVersion();
     nextVersion = extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
-    console.log('Version state initialized:', { currentVersion, nextVersion, currentVersionMode });
+    
+    // Create and register the tree view early to ensure UI is populated quickly
+    extensionState.treeView = vscode.window.createTreeView('scm-version-selector', {
+        treeDataProvider: extensionState.versionProvider,
+        showCollapseAll: false
+    });
+    context.subscriptions.push(extensionState.treeView);
+
+    // Create status bar item early
+    extensionState.versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    extensionState.versionStatusBarItem.command = 'github-versionsync.selectVersionType';
+    context.subscriptions.push(extensionState.versionStatusBarItem);
+    
+    // Initial UI updates
+    updateVersionStatusBar();
+    updateTitle();
+    
+    // Multi-stage refresh to ensure proper initialization even after extension host reload
+    // First refresh immediately
+    extensionState.versionProvider.refresh();
+    
+    // Second refresh after a short delay
+    setTimeout(() => {
+        console.log('First delayed refresh (100ms)');
+        if (extensionState.versionProvider) {
+            extensionState.versionProvider.refresh();
+        }
+    }, 100);
+    
+    // Third refresh after a longer delay to ensure everything is loaded
+    setTimeout(() => {
+        console.log('Second delayed refresh (500ms)');
+        if (extensionState.versionProvider) {
+            extensionState.versionProvider.refresh();
+            updateVersionStatusBar();
+            updateTitle();
+        }
+    }, 500);
 
     // Get the git extension and API once
     const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
@@ -1621,6 +1689,22 @@ export async function activate(context: vscode.ExtensionContext) {
     testButton.tooltip = 'Click to test version control view';
     testButton.show();
     context.subscriptions.push(testButton);
+
+    // Add explicit refresh command
+    const refreshCommand = vscode.commands.registerCommand('github-versionsync.refreshTreeView', () => {
+        console.log('Manual refresh requested');
+        if (extensionState.versionProvider) {
+            extensionState.versionProvider.refresh();
+            // Also update the current version and next version
+            currentVersion = extensionState.versionProvider.getCurrentVersion();
+            nextVersion = extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
+            // Update UI components
+            updateVersionStatusBar();
+            updateTitle();
+            vscode.window.showInformationMessage('Version tree view refreshed');
+        }
+    });
+    context.subscriptions.push(refreshCommand);
 }
 
 export function deactivate() {}
