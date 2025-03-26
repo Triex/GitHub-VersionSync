@@ -517,6 +517,14 @@ class ReleaseWebviewProvider {
                     case 'cancel':
                         this._view?.dispose();
                         break;
+                    case 'refreshChangelog':
+                        const showDate = message.showDate;
+                        const showAuthor = message.showAuthor;
+                        const newCommitHistory = await this.getCommitHistory(showDate, showAuthor);
+                        if (this._view) {
+                            this._view.webview.postMessage({ command: 'updateChangelog', changelog: newCommitHistory });
+                        }
+                        break;
                 }
             },
             undefined,
@@ -530,6 +538,12 @@ class ReleaseWebviewProvider {
 
     private getWebviewContent(version: string, commitHistory: string): string {
         const defaultTitle = `Release ${version}`;
+        
+        // Get configuration values
+        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+        const generateChangelog = config.get('generateChangelog', true);
+        const showDate = config.get('changelogShowDate', false);
+        const showAuthor = config.get('changelogShowAuthor', false);
         
         return `<!DOCTYPE html>
         <html lang="en">
@@ -598,6 +612,20 @@ class ReleaseWebviewProvider {
                     font-size: 12px;
                     padding: 4px 8px;
                 }
+                .checkbox-group {
+                    display: flex;
+                    gap: 16px;
+                    margin-bottom: 10px;
+                }
+                .checkbox-label {
+                    display: flex;
+                    align-items: center;
+                    cursor: pointer;
+                }
+                .checkbox-label input {
+                    width: auto;
+                    margin-right: 5px;
+                }
             </style>
         </head>
         <body>
@@ -611,6 +639,20 @@ class ReleaseWebviewProvider {
                     <div class="toolbar">
                         <button type="button" id="resetNotes" class="secondary">Reset to Commit History</button>
                         <button type="button" id="clearNotes" class="secondary">Clear</button>
+                    </div>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="generateChangelog" ${generateChangelog ? 'checked' : ''}>
+                            Generate Changelog
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="showDate" ${showDate ? 'checked' : ''}>
+                            Show Date
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="showAuthor" ${showAuthor ? 'checked' : ''}>
+                            Show Author
+                        </label>
                     </div>
                     <textarea id="notes" placeholder="Enter release notes...">${commitHistory}</textarea>
                 </div>
@@ -637,22 +679,58 @@ class ReleaseWebviewProvider {
                 });
 
                 document.getElementById('resetNotes').addEventListener('click', () => {
-                    document.getElementById('notes').value = commitHistory;
+                    refreshChangelog();
                 });
 
                 document.getElementById('clearNotes').addEventListener('click', () => {
                     document.getElementById('notes').value = '';
+                });
+                
+                // Add event listeners for changelog options
+                document.getElementById('generateChangelog').addEventListener('change', refreshChangelog);
+                document.getElementById('showDate').addEventListener('change', refreshChangelog);
+                document.getElementById('showAuthor').addEventListener('change', refreshChangelog);
+                
+                function refreshChangelog() {
+                    const generateChangelog = document.getElementById('generateChangelog').checked;
+                    if (!generateChangelog) {
+                        return;
+                    }
+                    
+                    const showDate = document.getElementById('showDate').checked;
+                    const showAuthor = document.getElementById('showAuthor').checked;
+                    
+                    vscode.postMessage({
+                        command: 'refreshChangelog',
+                        showDate: showDate,
+                        showAuthor: showAuthor
+                    });
+                }
+                
+                vscode.onDidReceiveMessage((message) => {
+                    switch (message.command) {
+                        case 'updateChangelog':
+                            document.getElementById('notes').value = message.changelog;
+                            break;
+                    }
                 });
             </script>
         </body>
         </html>`;
     }
 
-    private async getCommitHistory(): Promise<string> {
+    private async getCommitHistory(showDate: boolean = false, showAuthor: boolean = false): Promise<string> {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (!workspaceFolders) {
             return '';
         }
+
+        // Get changelog configuration
+        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+        
+        // Use passed parameters instead if provided, otherwise fall back to config values
+        const useShowDate = showDate !== undefined ? showDate : config.get('changelogShowDate', false);
+        const useShowAuthor = showAuthor !== undefined ? showAuthor : config.get('changelogShowAuthor', false);
 
         try {
             // Try to get the last tag
@@ -665,10 +743,24 @@ class ReleaseWebviewProvider {
                 // No tags exist, will get all commits
             }
 
-            // Get commit history with a cleaner, more organized format
+            // Build git log format based on user preferences
+            let formatString = '"- ';
+            if (useShowDate) {
+                formatString += '**%ad** ';
+            }
+            
+            formatString += '%s';
+            
+            if (useShowAuthor) {
+                formatString += ' _(by %an)_';
+            }
+            
+            formatString += '"';
+
+            // Get commit history with format based on user preferences
             const gitLogCommand = lastTag
-                ? `git log ${lastTag.trim()}..HEAD --pretty=format:"- **%ad** :: %s" --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
-                : 'git log --pretty=format:"- **%ad** :: %s" --date=short | sed -E \'s/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g\'';
+                ? `git log ${lastTag.trim()}..HEAD --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
+                : `git log --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`;
 
             const commitLog = await execAsync(gitLogCommand, { 
                 cwd: workspaceFolders[0].uri.fsPath 

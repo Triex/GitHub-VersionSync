@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -189,6 +189,21 @@
           "type": "boolean",
           "default": false,
           "description": "Create GitHub releases automatically when version is updated"
+        },
+        "github-versionsync.generateChangelog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate changelog when creating a release"
+        },
+        "github-versionsync.changelogShowDate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include dates in the changelog"
+        },
+        "github-versionsync.changelogShowAuthor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include authors in the changelog"
         },
         "github-versionsync.releasePrefix": {
           "type": "string",
