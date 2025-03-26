@@ -261,7 +261,7 @@
             "brackets"
           ],
           "default": "arrow",
-          "description": "Format for displaying version in commit messages. Examples:\n- arrow: 'feat: My feature → v1.2.3'\n- bump: 'feat: My feature ⇧ v1.2.3'\n- simple: 'feat: My feature v1.2.3'\n- release: 'feat: My feature 📦 v1.2.3'\n- brackets: 'feat: My feature (v1.2.3)'"
+          "description": "Format for displaying version in commit messages. Available options:\n- arrow: 'feat: My feature → v1.2.3'\n- bump: 'feat: My feature ⇧ v1.2.3'\n- simple: 'feat: My feature v1.2.3'\n- release: 'feat: My feature 📦 v1.2.3'\n- brackets: 'feat: My feature (v1.2.3)'"
         }
       }
     },
