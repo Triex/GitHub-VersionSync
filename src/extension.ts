@@ -699,7 +699,8 @@ class ReleaseWebviewProvider {
         const commitHistory = await this.getCommitHistory();
         
         if (this._view) {
-            this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
+            const escapedCommitHistory = commitHistory.replace(/"/g, '\\"');
+            this._view.webview.html = this.getWebviewContent(currentVersion, escapedCommitHistory);
 
             this._view.webview.onDidReceiveMessage(
                 async (message) => {
@@ -809,6 +810,8 @@ class ReleaseWebviewProvider {
                 <div>
                     <button id="create">Create Release</button>
                     <button id="cancel">Cancel</button>
+                    <button id="resetHistory" title="Reset commit history">Reset History</button>
+                    <button id="clearNotes" title="Clear all text">Clear</button>
                 </div>
             </div>
             <script>
@@ -846,7 +849,16 @@ class ReleaseWebviewProvider {
                     refreshChangelog();
                 });
                 
-                function refreshChangelog() {
+                // Add handlers for new buttons
+                document.getElementById('resetHistory').addEventListener('click', () => {
+                    refreshChangelog(true); // Force refresh regardless of current state
+                });
+                
+                document.getElementById('clearNotes').addEventListener('click', () => {
+                    document.getElementById('notes').value = '';
+                });
+                
+                function refreshChangelog(forceRefresh = false) {
                     const showDate = document.getElementById('showDate').checked;
                     const showAuthor = document.getElementById('showAuthor').checked;
                     const includeMessageBody = document.getElementById('includeMessageBody').checked;
@@ -855,7 +867,8 @@ class ReleaseWebviewProvider {
                         command: 'refreshChangelog',
                         showDate: showDate,
                         showAuthor: showAuthor,
-                        includeMessageBody: includeMessageBody
+                        includeMessageBody: includeMessageBody,
+                        forceRefresh: forceRefresh
                     });
                 }
                 
@@ -902,7 +915,7 @@ class ReleaseWebviewProvider {
                 vscode.workspace.getConfiguration(EXTENSION_NAME).update('changelogIncludeMessageBody', message.includeMessageBody, vscode.ConfigurationTarget.Global);
                 
                 // Regenerate the changelog with the new preferences
-                this.changelogGenerator.generateChangelog(
+                this.getCommitHistory(
                     message.showDate, 
                     message.showAuthor,
                     message.includeMessageBody
