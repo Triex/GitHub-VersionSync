@@ -215,3 +215,40 @@ Found a bug or have a feature request? Please [open an issue](https://github.com
 ## 📄 No License
 
 This extension currently has no license.
+
+---
+
+## Per-Project Configuration
+
+GitHub Version Sync supports workspace-specific (per-project) settings, allowing you to have different configurations for each project. This is particularly useful for pre-release commands, which may vary depending on the project structure and build tools.
+
+### Setting Up Workspace Settings
+
+1. Open your project in VS Code
+2. Go to File > Preferences > Settings (or press `Cmd+,` on macOS, `Ctrl+,` on Windows/Linux)
+3. Click on "Workspace" tab at the top to switch from User settings to Workspace settings
+4. Search for "GitHub Version Sync" to find all extension settings
+5. Configure the settings specifically for your current workspace
+
+### Example: Project-Specific Pre-Release Commands
+
+For a project using TypeScript with npm:
+```json
+{
+  "github-versionsync.preReleaseCommands": [
+    "npm run build",
+    "npx @vscode/vsce package"
+  ]
+}
+```
+
+For a project using TypeScript with Bun:
+```json
+{
+  "github-versionsync.preReleaseCommands": [
+    "~/.bun/bin/bun run build"
+  ]
+}
+```
+
+Workspace settings are stored in the `.vscode/settings.json` file in your project, which you can also edit directly.

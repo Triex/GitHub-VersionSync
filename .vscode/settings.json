@@ -1,2 +1,11 @@
 {
+  "github-versionsync.preReleaseCommands": [
+    "echo 'Building GitHub Version Sync extension...'",
+    "npx typescript/bin/tsc -p ./",
+    "npx @vscode/vsce package"
+  ],
+  "github-versionsync.includePackageFiles": [
+    "*.vsix"
+  ],
+  "github-versionsync.enableGitHubRelease": true
 }

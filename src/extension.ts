@@ -386,6 +386,27 @@ async function getRepoUrl(): Promise<string> {
     return repoUrlMatch[1].replace(':', '/');
 }
 
+// Add this helper function to get workspace-specific settings
+function getWorkspaceConfig<T>(section: string, defaultValue: T): T {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        return vscode.workspace.getConfiguration(EXTENSION_NAME).get(section, defaultValue);
+    }
+    
+    // Try to get workspace setting first
+    const workspaceValue = vscode.workspace.getConfiguration(
+        EXTENSION_NAME, workspaceFolder.uri
+    ).get<T>(section);
+    
+    // If workspace setting exists, return it
+    if (workspaceValue !== undefined) {
+        return workspaceValue;
+    }
+    
+    // Otherwise fall back to user setting
+    return vscode.workspace.getConfiguration(EXTENSION_NAME).get(section, defaultValue);
+}
+
 async function createGitHubRelease(version: string, message: string = '', title?: string) {
     // Prevent recursive releases
     if (isCreatingRelease) {
@@ -395,11 +416,11 @@ async function createGitHubRelease(version: string, message: string = '', title?
     
     isCreatingRelease = true;
     try {
-        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-        const prefix = config.get('releasePrefix', 'v');
+        // Use workspace-specific settings with user settings as fallback
+        const prefix = getWorkspaceConfig('releasePrefix', 'v');
         
-        // Run pre-release commands
-        const preReleaseCommands = config.get('preReleaseCommands', []) as string[];
+        // Run pre-release commands - use workspace-specific commands
+        const preReleaseCommands = getWorkspaceConfig<string[]>('preReleaseCommands', []);
         if (preReleaseCommands.length > 0) {
             try {
                 const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
@@ -492,7 +513,7 @@ async function createGitHubRelease(version: string, message: string = '', title?
         }
 
         // Find release assets
-        const includePatterns = config.get('includePackageFiles', ['*.vsix']) as string[];
+        const includePatterns = getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
         const assets: string[] = [];
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
         
