@@ -2007,6 +2007,56 @@ export async function activate(context: vscode.ExtensionContext) {
             return { hasVersionChanges: false };
         }
     }
+
+    // Setup Git repository watcher to detect changes like resets, pulls, checkouts, etc.
+    function setupGitRepositoryWatcher() {
+        try {
+            const repos = vscode.extensions.getExtension('vscode.git')?.exports.getAPI(1).repositories;
+            
+            if (repos && repos.length > 0) {
+                for (const repo of repos) {
+                    // Debounce the handler to avoid multiple rapid refreshes
+                    const debouncedHandler = debounce(async () => {
+                        // Only clear caches if package.json has changed
+                        const packageJsonPath = path.join(repo.rootUri.fsPath, 'package.json');
+                        
+                        try {
+                            // Get the current version from file system directly
+                            const packageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
+                            const packageJson = JSON.parse(packageJsonContent);
+                            const fileVersion = packageJson.version;
+                            
+                            // Compare with our cached version
+                            if (lastCalculatedVersion !== fileVersion) {
+                                console.log('package.json version changed, refreshing cache');
+                                lastCalculatedVersion = undefined;
+                                nextVersion = '';
+                                
+                                if (extensionState.versionProvider) {
+                                    extensionState.versionProvider.lastCalculatedVersion = undefined;
+                                    extensionState.versionProvider.refresh();
+                                }
+                                
+                                updateTitle();
+                                updateVersionStatusBar();
+                            }
+                        } catch (err) {
+                            // If we can't read package.json, play it safe and refresh
+                            console.log('Error checking package.json, refreshing cache as precaution');
+                            lastCalculatedVersion = undefined;
+                        }
+                    }, 500); // 500ms debounce
+                    
+                    repo.state.onDidChange(debouncedHandler);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to setup Git repository watcher:', error);
+        }
+    }
+    
+    // Run this after a short delay to ensure Git extension is fully loaded
+    setTimeout(setupGitRepositoryWatcher, 2000);
 }
 
 export function deactivate() {}
