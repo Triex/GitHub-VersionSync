@@ -804,14 +804,14 @@ class ReleaseWebviewProvider {
                             <input type="checkbox" id="includeMessageBody" ${includeMessageBody ? 'checked' : ''}>
                             Include Message Body
                         </label>
+                        <button id="resetHistory" title="Reset commit history">Reset History</button>
+                        <button id="clearNotes" title="Clear all text">Clear</button>
                     </div>
                     <textarea id="notes" placeholder="Enter release notes...">${commitHistory}</textarea>
                 </div>
                 <div>
                     <button id="create">Create Release</button>
                     <button id="cancel">Cancel</button>
-                    <button id="resetHistory" title="Reset commit history">Reset History</button>
-                    <button id="clearNotes" title="Clear all text">Clear</button>
                 </div>
             </div>
             <script>
