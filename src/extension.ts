@@ -665,10 +665,10 @@ class ReleaseWebviewProvider {
                 // No tags exist, will get all commits
             }
 
-            // Get commit history with more details
+            // Get commit history with a cleaner, more organized format
             const gitLogCommand = lastTag
-                ? `git log ${lastTag.trim()}..HEAD --pretty=format:"### %s%n%n**Author:** %an%n**Date:** %ci%n**Commit:** %H%n%n%b%n"`
-                : 'git log --pretty=format:"### %s%n%n**Author:** %an%n**Date:** %ci%n**Commit:** %H%n%n%b%n"';
+                ? `git log ${lastTag.trim()}..HEAD --pretty=format:"- **%ad** :: %s" --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
+                : 'git log --pretty=format:"- **%ad** :: %s" --date=short | sed -E \'s/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g\'';
 
             const commitLog = await execAsync(gitLogCommand, { 
                 cwd: workspaceFolders[0].uri.fsPath 
@@ -678,7 +678,27 @@ class ReleaseWebviewProvider {
                 return '### No new commits since last release.';
             }
 
-            return `# Changelog\n\n${commitLog.trim()}`;
+            // Group commits by date
+            const commits = commitLog.split('\n');
+            let formattedOutput = '';
+            
+            // Get version from package.json
+            const currentVersion = getCurrentVersion();
+            
+            // Add a clear title with version info
+            formattedOutput = `# Release ${currentVersion}\n\n`;
+            
+            // Add a summary section showing what's changed since last tag
+            if (lastTag && lastTag.trim()) {
+                formattedOutput += `## Changes since ${lastTag.trim()}\n\n`;
+            } else {
+                formattedOutput += `## All Changes\n\n`;
+            }
+
+            // Add the commits, which are already formatted nicely
+            formattedOutput += commits.join('\n');
+
+            return formattedOutput;
         } catch (error: any) {
             console.error('Error getting commit history:', error);
             return '### Failed to get commit history';
