@@ -148,6 +148,14 @@ export class GitHubApi {
         
         this.isCreatingRelease = true;
         try {
+            // Log detailed diagnostic information
+            console.log('Creating GitHub release with:', {
+                version,
+                title,
+                messageLength: message ? message.length : 0,
+                assets: assets.length
+            });
+            
             // Use workspace-specific settings with user settings as fallback
             const prefix = this.getWorkspaceConfig('releasePrefix', 'v');
             

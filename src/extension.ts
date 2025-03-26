@@ -596,68 +596,87 @@ function getLatestVersionFiles(files: vscode.Uri[]): vscode.Uri[] {
     return latestFiles;
 }
 
-async function createGitHubRelease(version: string, message: string = '', title?: string) {
-    console.log(`createGitHubRelease called for version ${version}`);
+async function createGitHubRelease(version: string, message: string = '', title?: string, forceEnabled: boolean = false) {
+    console.log(`createGitHubRelease called for version ${version}, forceEnabled: ${forceEnabled}`);
     
-    // ALWAYS check the current setting directly from configuration to ensure accuracy
-    const releaseEnabled = getGitHubReleaseEnabled();
-    if (!releaseEnabled) {
-        console.log('Automatic GitHub releases are disabled, skipping release creation');
-        return;
-    }
-    
-    console.log(`Creating GitHub release for version ${version}`);
-    
-    // Prevent recursive releases
-    if (isCreatingRelease) {
-        console.log('Release creation already in progress, skipping to prevent recursion');
-        return;
-    }
-    
-    isCreatingRelease = true;
     try {
-        // Show information message to indicate the release creation has started
-        vscode.window.showInformationMessage(`Creating GitHub release for v${version}...`);
-
-        // NOTE: All this commented out code is now handled by the githubApi class
-        // The githubApi.createRelease method handles:
-        // 1. Running pre-release commands
-        // 2. GitHub authentication  
-        // 3. Creating the release with proper tag
-        // 4. Uploading assets
-        
-        // Find release assets
-        const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
-        const assets: string[] = [];
-        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-        
-        if (workspaceRoot) {
-            for (const pattern of includePatterns) {
-                const files = await vscode.workspace.findFiles(
-                    new vscode.RelativePattern(workspaceRoot, pattern)
-                );
-                
-                // Filter to only include the latest version of each file type
-                const latestFiles = getLatestVersionFiles(files);
-                assets.push(...latestFiles.map(f => f.fsPath));
+        // Only check for release enabled if we're not forcing it
+        if (!forceEnabled) {
+            // ALWAYS check the current setting directly from configuration to ensure accuracy
+            const releaseEnabled = getGitHubReleaseEnabled();
+            console.log(`Release enabled: ${releaseEnabled}`);
+            
+            if (!releaseEnabled) {
+                console.log('Automatic GitHub releases are disabled, skipping release creation');
+                return;
             }
-        }
-
-        // Call the GitHub API to handle the release creation
-        const success = await githubApi.createRelease(version, message, title, assets);
-        
-        if (success) {
-            console.log(`Successfully created GitHub release for v${version}`);
         } else {
-            console.error(`Failed to create GitHub release for v${version}`);
-            vscode.window.showErrorMessage(`Failed to create GitHub release for v${version}.`);
+            console.log('Forcing release creation regardless of settings (user-initiated)');
+        }
+        
+        console.log(`Creating GitHub release for version ${version}`);
+        
+        // Prevent recursive releases
+        if (isCreatingRelease) {
+            console.log('Release creation already in progress, skipping to prevent recursion');
+            return;
+        }
+        
+        isCreatingRelease = true;
+        try {
+            // Show information message to indicate the release creation has started
+            vscode.window.showInformationMessage(`Creating GitHub release for v${version}...`);
+
+            // NOTE: All this commented out code is now handled by the githubApi class
+            // The githubApi.createRelease method handles:
+            // 1. Running pre-release commands
+            // 2. GitHub authentication  
+            // 3. Creating the release with proper tag
+            // 4. Uploading assets
+            
+            // Find release assets
+            if (!extensionState || !extensionState.isInitialized) {
+                throw new Error('Extension state not initialized');
+            }
+            
+            const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
+            const assets: string[] = [];
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+            
+            if (workspaceRoot) {
+                for (const pattern of includePatterns) {
+                    const files = await vscode.workspace.findFiles(
+                        new vscode.RelativePattern(workspaceRoot, pattern)
+                    );
+                    
+                    // Filter to only include the latest version of each file type
+                    const latestFiles = getLatestVersionFiles(files);
+                    assets.push(...latestFiles.map(f => f.fsPath));
+                }
+            }
+
+            console.log(`Found ${assets.length} assets to include in release:`, assets);
+
+            // Call the GitHub API to handle the release creation
+            const success = await githubApi.createRelease(version, message, title, assets);
+            
+            if (!success) {
+                throw new Error('GitHub API reported failure creating release');
+            }
+            
+            console.log(`Successfully created GitHub release for v${version}`);
+            vscode.window.showInformationMessage(`Successfully created GitHub release for v${version}`);
+        } catch (error: any) {
+            console.error('Error creating GitHub release:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            vscode.window.showErrorMessage(`Failed to create GitHub release: ${errorMessage}`);
+            throw error; // Re-throw to allow handling in the calling function
+        } finally {
+            isCreatingRelease = false;  // Reset the flag when done, even if there was an error
         }
     } catch (error: any) {
         console.error('Error creating GitHub release:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-        vscode.window.showErrorMessage(`Failed to create GitHub release: ${errorMessage}`);
-    } finally {
-        isCreatingRelease = false;  // Reset the flag when done, even if there was an error
+        vscode.window.showErrorMessage(`Failed to create GitHub release: ${error}`);
     }
 }
 
@@ -699,8 +718,9 @@ class ReleaseWebviewProvider {
         const commitHistory = await this.getCommitHistory();
         
         if (this._view) {
-            const escapedCommitHistory = commitHistory.replace(/"/g, '\\"');
-            this._view.webview.html = this.getWebviewContent(currentVersion, escapedCommitHistory);
+            // Don't do any escaping here - just pass the raw content to the webview
+            // The HTML templating will handle it properly
+            this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
 
             this._view.webview.onDidReceiveMessage(
                 async (message) => {
@@ -818,16 +838,33 @@ class ReleaseWebviewProvider {
                 const vscode = acquireVsCodeApi();
                 
                 document.getElementById('create').addEventListener('click', () => {
-                    const version = document.getElementById('version').value;
-                    const notes = document.getElementById('notes').value;
-                    const title = document.getElementById('title').value || undefined;
-                    
-                    vscode.postMessage({
-                        command: 'createRelease',
-                        version,
-                        notes,
-                        title
-                    });
+                    try {
+                        const version = document.getElementById('version').value;
+                        const notes = document.getElementById('notes').value || '';
+                        const title = document.getElementById('title').value || '';
+                        
+                        console.log('Sending createRelease message from webview with:', {
+                            version,
+                            notesLength: notes ? notes.length : 0,
+                            hasTitle: !!title
+                        });
+                        
+                        // First make sure version is defined
+                        if (!version) {
+                            console.error('Version is empty or undefined');
+                            alert('Cannot create release: Version is missing');
+                            return;
+                        }
+                        
+                        vscode.postMessage({
+                            command: 'createRelease',
+                            version: version,
+                            notes: notes,
+                            title: title.length > 0 ? title : undefined
+                        });
+                    } catch (error) {
+                        console.error('Error in create button handler:', error);
+                    }
                 });
                 
                 document.getElementById('cancel').addEventListener('click', () => {
@@ -875,9 +912,11 @@ class ReleaseWebviewProvider {
                 // Handle messages from the extension
                 window.addEventListener('message', event => {
                     const message = event.data;
+                    console.log('Received message from extension:', message.command);
                     
                     if (message.command === 'updateChangelog') {
-                        document.getElementById('notes').value = message.changelog;
+                        // Safely update the text area with the new changelog
+                        document.getElementById('notes').value = message.changelog || '';
                     }
                 });
             </script>
@@ -892,16 +931,64 @@ class ReleaseWebviewProvider {
     private _onDidReceiveMessage(message: any) {
         switch (message.command) {
             case 'createRelease':
+                console.log('Received createRelease command from webview:', {
+                    version: message.version,
+                    title: message.title ? message.title.substring(0, 30) + '...' : 'none',
+                    hasNotes: !!message.notes
+                });
+                
                 vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
                     title: "Creating GitHub Release",
                     cancellable: false
                 }, async () => {
                     try {
-                        await createGitHubRelease(message.version, message.notes, message.title);
+                        // Check extension state
+                        if (!extensionState || !extensionState.isInitialized) {
+                            throw new Error('Extension state not initialized');
+                        }
+                        
+                        // Get the GitHub API
+                        if (!githubApi) {
+                            throw new Error('GitHub API not initialized');
+                        }
+                        
+                        // Find release assets
+                        const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
+                        const assets: string[] = [];
+                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+                        
+                        if (workspaceRoot) {
+                            for (const pattern of includePatterns) {
+                                const files = await vscode.workspace.findFiles(
+                                    new vscode.RelativePattern(workspaceRoot, pattern)
+                                );
+                                
+                                // Filter to only include the latest version of each file type
+                                const latestFiles = getLatestVersionFiles(files);
+                                assets.push(...latestFiles.map(f => f.fsPath));
+                            }
+                        }
+                        
+                        console.log(`Found ${assets.length} assets to include in release:`, assets);
+                        
+                        // Call the GitHub API directly
+                        const success = await githubApi.createRelease(
+                            message.version,
+                            message.notes || '', 
+                            message.title, 
+                            assets
+                        );
+                        
+                        if (!success) {
+                            throw new Error('GitHub API reported failure creating release');
+                        }
+                        
+                        // Close the webview
                         this._view?.dispose();
                     } catch (error: any) {
-                        vscode.window.showErrorMessage(`Failed to create release: ${error}`);
+                        console.error('Failed to create release:', error);
+                        vscode.window.showErrorMessage(`Failed to create release: ${error.message}`);
                     }
                 });
                 break;
