@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -78,7 +78,9 @@
   },
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
-    "build": "tsc -p ./ && vsce package",
+    "build": "node -e \"try { require('child_process').execSync('bun -v', {stdio: 'ignore'}); require('child_process').execSync('bun run build:bun', {stdio: 'inherit'}); } catch(e) { require('child_process').execSync('npm run build:npm', {stdio: 'inherit'}); }\"",
+    "build:bun": "tsc -p ./ && vsce package",
+    "build:npm": "tsc -p ./ && npx @vscode/vsce package",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "echo \"No tests yet\""
