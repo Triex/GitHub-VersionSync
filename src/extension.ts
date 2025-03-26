@@ -618,6 +618,13 @@ async function createGitHubRelease(version: string, message: string = '', title?
     try {
         // Show information message to indicate the release creation has started
         vscode.window.showInformationMessage(`Creating GitHub release for v${version}...`);
+
+        // NOTE: All this commented out code is now handled by the githubApi class
+        // The githubApi.createRelease method handles:
+        // 1. Running pre-release commands
+        // 2. GitHub authentication  
+        // 3. Creating the release with proper tag
+        // 4. Uploading assets
         
         // Find release assets
         const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
@@ -636,7 +643,7 @@ async function createGitHubRelease(version: string, message: string = '', title?
             }
         }
 
-        // Run any pre-release commands through GitHub API
+        // Call the GitHub API to handle the release creation
         const success = await githubApi.createRelease(version, message, title, assets);
         
         if (success) {
@@ -923,11 +930,13 @@ function getCurrentVersion(): string {
     try {
         // First try VERSION file if configured
         if (config.get('versionFile', '') && fs.existsSync(versionFilePath)) {
+            console.log('Reading version from VERSION file: ' + versionFilePath);
             return fs.readFileSync(versionFilePath, 'utf-8').trim();
         }
 
         // Then try package.json
         if (fs.existsSync(packageJsonPath)) {
+            console.log('Reading version from package.json: ' + packageJsonPath);
             const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
             return packageJson.version || '1.0.0';
         }
@@ -1075,16 +1084,27 @@ function escapeCommitMessage(message: string): string {
     return message.replace(/`/g, '\\`');
 }
 
-function debounce(func: Function, wait: number) {
-    let timeout: NodeJS.Timeout;
-    return function executedFunction(...args: any[]) {
-        const later = () => {
-            clearTimeout(timeout);
+let debounce = function(func: Function, wait: number) {
+    let timeout: NodeJS.Timeout | null = null;
+    return function(...args: any[]) {
+        clearTimeout(timeout!);
+        timeout = setTimeout(() => {
+            timeout = null;
             func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        }, wait);
     };
+};
+
+// Helper function to create error tree items
+function createErrorTreeItem(label: string, description?: string): vscode.TreeItem {
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon('error');
+    item.contextValue = 'error';
+    if (description) {
+        item.description = description;
+        item.tooltip = description;
+    }
+    return item;
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -1780,51 +1800,213 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('github-versionsync.commit', async (uri: vscode.Uri) => {
+            if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+                vscode.window.showErrorMessage('No workspace is open');
+                return;
+            }
+
+            try {
+                // Check for staged version changes first
+                const stagedChanges = await checkStagedVersionChanges();
+                console.log('Checked for staged version changes:', JSON.stringify(stagedChanges));
+                
+                // If there are already staged version changes, we should respect them
+                if (stagedChanges.hasVersionChanges && stagedChanges.stagedVersion) {
+                    const proceed = await vscode.window.showInformationMessage(
+                        `Detected version change already staged: ${stagedChanges.stagedVersion}. Proceed with this version?`,
+                        { modal: true },
+                        'Yes', 'No (Use Extension Version)'
+                    );
+                    
+                    if (proceed === 'Yes') {
+                        console.log(`Using staged version: ${stagedChanges.stagedVersion}`);
+                        nextVersion = stagedChanges.stagedVersion;
+                        // Update the mode to match what's staged
+                        if (stagedChanges.currentVersion) {
+                            // Determine what kind of version bump this was
+                            const versionParts = stagedChanges.currentVersion.split('.');
+                            const stagedParts = stagedChanges.stagedVersion.split('.');
+                            
+                            if (versionParts.length >= 3 && stagedParts.length >= 3) {
+                                if (versionParts[0] !== stagedParts[0]) {
+                                    currentVersionMode = 'major';
+                                } else if (versionParts[1] !== stagedParts[1]) {
+                                    currentVersionMode = 'minor';
+                                } else if (versionParts[2] !== stagedParts[2]) {
+                                    currentVersionMode = 'patch';
+                                } else {
+                                    currentVersionMode = 'custom';
+                                }
+                            }
+                        }
+                    } else {
+                        // User chose to use the extension's version instead
+                        // Always re-read current version from disk (not cache) to prevent stale data
+                        const currentVersion = getCurrentVersion();
+                        console.log(`Using extension's version logic. Current version on disk: ${currentVersion}`);
+                        if (currentVersion) {
+                            nextVersion = extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
+                        }
+                    }
+                } else {
+                    // No staged version changes - ensure we're using the actual current version
+                    // Always re-read current version from disk (not cache) to prevent stale data after git operations
+                    const currentVersion = getCurrentVersion();
+                    console.log(`No staged version changes. Current version on disk: ${currentVersion}`);
+                    if (currentVersion) {
+                        nextVersion = extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
+                    }
+                }
+                
+                console.log(`Version for commit: ${nextVersion} (${currentVersionMode} mode)`);
+                
+                // Continue with the normal commit flow
+                const selectedFiles = uri ? [uri] : undefined;
+                const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+                
+                if (!gitExtension) {
+                    vscode.window.showErrorMessage('Git extension not found');
+                    return;
+                }
+                
+                const gitApi = gitExtension.getAPI(1);
+                
+                if (!gitApi) {
+                    vscode.window.showErrorMessage('Git API not available');
+                    return;
+                }
+                
+                // Get workspace folder
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    vscode.window.showErrorMessage('No workspace is open');
+                    return;
+                }
+                
+                // Find repository for current workspace
+                const repository = gitApi.repositories.find((repo: any) => 
+                    repo.rootUri.fsPath === workspaceFolders[0].uri.fsPath
+                );
+                
+                if (!repository) {
+                    vscode.window.showErrorMessage('No Git repository found in the current workspace');
+                    return;
+                }
+                
+                // Execute the git.commit command with the selected files
+                vscode.commands.executeCommand('git.commit', repository, { all: !selectedFiles, files: selectedFiles });
+            } catch (error: any) {
+                console.error('Error in commit command:', error);
+                vscode.window.showErrorMessage(`Error in commit command: ${error.message}`);
+            }
+        })
+    );
+
+    /**
+     * Check if a tag already exists
+     * @param cwd Working directory
+     * @param version Version to check
+     * @returns True if tag exists, false otherwise
+     */
+    async function checkTagExists(cwd: string, version: string): Promise<boolean> {
+        try {
+            await execAsync(`git rev-parse v${version}`, { cwd });
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    /**
+     * Check if a remote repository exists
+     * @param cwd Working directory
+     * @returns True if remote exists, false otherwise
+     */
+    async function checkRemoteExists(cwd: string): Promise<boolean> {
+        try {
+            const result = await execAsync('git remote', { cwd });
+            return result.trim().includes('origin');
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function showExtensionStateWarning(message: string) {
+        extensionState.showStateWarning(message);
+    }
+
+    /**
+     * Checks for staged version changes in the git repository
+     * @returns Object containing info about staged changes
+     */
+    async function checkStagedVersionChanges(): Promise<{
+        hasVersionChanges: boolean;
+        stagedVersion?: string;
+        currentVersion?: string;
+    }> {
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                return { hasVersionChanges: false };
+            }
+            
+            const cwd = workspaceFolders[0].uri.fsPath;
+            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+            const useVersionFile = !!config.get('versionFile', '');
+            
+            // Command to check if there are staged version changes
+            let command;
+            if (useVersionFile) {
+                const versionFile = config.get('versionFile', '');
+                command = `git diff --cached -- "${versionFile}"`;
+            } else {
+                command = `git diff --cached -- package.json`;
+            }
+            
+            // Run git command to get staged changes
+            const diffOutput = await execAsync(command, { cwd });
+            
+            if (!diffOutput) {
+                return { hasVersionChanges: false };
+            }
+            
+            // Check if the diff contains version changes
+            const versionRegex = useVersionFile 
+                ? /^[-+](.*?)$/gm                    // For VERSION file: entire content
+                : /["-+]\s*"version"\s*:\s*"([^"]+)"/ // For package.json: version field
+            
+            let hasChanges = false;
+            let stagedVersion;
+            
+            // Extract staged version from diff
+            const lines = diffOutput.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('+') && line.includes('version')) {
+                    const match = line.match(versionRegex);
+                    if (match && match[1]) {
+                        hasChanges = true;
+                        stagedVersion = useVersionFile ? match[1].trim() : match[1];
+                        break;
+                    }
+                }
+            }
+            
+            // Get the current version from the actual file (not cache)
+            const currentVersion = getCurrentVersion();
+            
+            return {
+                hasVersionChanges: hasChanges,
+                stagedVersion,
+                currentVersion
+            };
+        } catch (error) {
+            console.error('Error checking staged version changes:', error);
+            return { hasVersionChanges: false };
+        }
+    }
 }
 
 export function deactivate() {}
-
-/**
- * Check if a tag already exists
- * @param cwd Working directory
- * @param version Version to check
- * @returns True if tag exists, false otherwise
- */
-async function checkTagExists(cwd: string, version: string): Promise<boolean> {
-    try {
-        await execAsync(`git rev-parse v${version}`, { cwd });
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-/**
- * Check if a remote repository exists
- * @param cwd Working directory
- * @returns True if remote exists, false otherwise
- */
-async function checkRemoteExists(cwd: string): Promise<boolean> {
-    try {
-        const result = await execAsync('git remote', { cwd });
-        return result.trim().includes('origin');
-    } catch (error) {
-        return false;
-    }
-}
-
-function showExtensionStateWarning(message: string) {
-    extensionState.showStateWarning(message);
-}
-
-// Helper function to create error tree items
-function createErrorTreeItem(label: string, description?: string): vscode.TreeItem {
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    item.iconPath = new vscode.ThemeIcon('error');
-    item.contextValue = 'error';
-    if (description) {
-        item.description = description;
-        item.tooltip = description;
-    }
-    return item;
-}
