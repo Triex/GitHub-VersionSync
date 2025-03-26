@@ -188,6 +188,39 @@ Configure which files to include in your releases:
 
 ---
 
+## Advanced Changelog Options
+
+GitHub Version Sync provides several options to customize your changelog output:
+
+### Include Commit Message Bodies
+
+When creating a new GitHub release, you can now choose to include the full commit message bodies in the changelog, not just the first line. This is especially useful for commits with detailed explanations:
+
+```
+feat: Smart release asset selection
+
+This feature intelligently filters release assets to prevent including multiple versions 
+of the same package. It groups files with similar base names, ignoring version numbers, 
+and selects only the most recently modified file from each group to include in releases.
+```
+
+To enable this option:
+
+1. Check the "Include Message Body" option in the release dialog
+2. Or set it permanently in your settings:
+   ```json
+   "github-versionsync.changelogIncludeMessageBody": true
+   ```
+
+The message bodies will be indented and properly formatted in the final changelog.
+
+### Other Changelog Options
+
+- **Show Dates**: Include the commit date in the changelog
+- **Show Authors**: Include the author's name for each commit
+
+---
+
 ## 🔑 GitHub Authentication
 
 For GitHub release creation, the extension requires a GitHub token:

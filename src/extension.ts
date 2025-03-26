@@ -4,9 +4,9 @@ import { Octokit } from 'octokit';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { ChangelogGenerator, EXTENSION_NAME } from './changelog';
 
-const EXTENSION_NAME = 'github-versionsync';
-const PACKAGE_JSON = 'package.json';
+const EXTENSION_NAME_OLD = 'github-versionsync';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
 type VersionType = 'major' | 'minor' | 'patch' | 'custom' | 'none';
@@ -616,20 +616,21 @@ class ReleaseWebviewProvider {
     private static readonly viewType = 'github-versionsync.createRelease';
     private readonly _extensionUri: vscode.Uri;
     private _view?: vscode.WebviewPanel;
+    private changelogGenerator: ChangelogGenerator;
 
-    constructor(extensionUri: vscode.Uri) {
-        this._extensionUri = extensionUri;
+    constructor(private context: vscode.ExtensionContext) {
+        this._extensionUri = context.extensionUri;
+        this.changelogGenerator = new ChangelogGenerator();
     }
 
     async show() {
-        if (this._view) {
-            this._view.reveal(vscode.ViewColumn.One);
-            return;
-        }
-
-        const currentVersion = getCurrentVersion();
-        if (!currentVersion) {
-            vscode.window.showErrorMessage('Could not determine current version');
+        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+        
+        // Get current version
+        let currentVersion = '';
+        try {
+            currentVersion = getCurrentVersion();
+        } catch (e) {
             return;
         }
 
@@ -639,9 +640,8 @@ class ReleaseWebviewProvider {
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                retainContextWhenHidden: true,
                 localResourceRoots: [
-                    vscode.Uri.joinPath(this._extensionUri, 'images')
+                    vscode.Uri.joinPath(this._extensionUri, 'media')
                 ]
             }
         );
@@ -649,58 +649,25 @@ class ReleaseWebviewProvider {
         // Get commit history
         const commitHistory = await this.getCommitHistory();
         
-        this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
+        if (this._view) {
+            this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
 
-        this._view.webview.onDidReceiveMessage(
-            async (message) => {
-                switch (message.command) {
-                    case 'createRelease':
-                        try {
-                            await vscode.window.withProgress({
-                                location: vscode.ProgressLocation.Notification,
-                                title: "Creating GitHub Release",
-                                cancellable: false
-                            }, async () => {
-                                await createGitHubRelease(currentVersion, message.notes, message.title);
-                            });
-                            this._view?.dispose();
-                        } catch (error: any) {
-                            vscode.window.showErrorMessage(`Failed to create release: ${error}`);
-                        }
-                        break;
-                    case 'cancel':
-                        this._view?.dispose();
-                        break;
-                    case 'refreshChangelog':
-                        const showDate = message.showDate;
-                        const showAuthor = message.showAuthor;
-                        const newCommitHistory = await this.getCommitHistory(showDate, showAuthor);
-                        if (this._view) {
-                            this._view.webview.postMessage({ command: 'updateChangelog', changelog: newCommitHistory });
-                        }
-                        break;
-                }
-            },
-            undefined,
-            []
-        );
-
-        this._view.onDidDispose(() => {
-            this._view = undefined;
-        });
+            this._view.webview.onDidReceiveMessage(
+                async (message) => {
+                    this._onDidReceiveMessage(message);
+                },
+                undefined,
+                []
+            );
+        }
     }
 
     private getWebviewContent(version: string, commitHistory: string): string {
-        const defaultTitle = `Release ${version}`;
-        
-        // Get configuration values
+        // Get configuration
         const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
         const showDate = config.get('changelogShowDate', false);
         const showAuthor = config.get('changelogShowAuthor', false);
-        
-        // Generate URIs for images
-        const logoPath = vscode.Uri.joinPath(this._extensionUri, 'images', 'icon.png');
-        const logoUri = this._view?.webview.asWebviewUri(logoPath);
+        const includeMessageBody = config.get('changelogIncludeMessageBody', false);
         
         return `<!DOCTYPE html>
         <html lang="en">
@@ -710,108 +677,71 @@ class ReleaseWebviewProvider {
             <title>Create GitHub Release</title>
             <style>
                 body {
-                    padding: 20px;
-                    color: var(--vscode-editor-foreground);
                     font-family: var(--vscode-font-family);
-                    background-color: var(--vscode-editor-background);
+                    padding: 15px;
+                    color: var(--vscode-foreground);
                 }
-                .header {
+                .container {
                     display: flex;
-                    align-items: center;
-                    margin-bottom: 20px;
-                }
-                .logo {
-                    width: 32px;
-                    height: 32px;
-                    margin-right: 10px;
-                }
-                .form-group {
-                    margin-bottom: 15px;
+                    flex-direction: column;
+                    gap: 15px;
                 }
                 label {
                     display: block;
                     margin-bottom: 5px;
-                    color: var(--vscode-input-foreground);
                 }
                 input, textarea {
                     width: 100%;
                     padding: 8px;
-                    border: 1px solid var(--vscode-input-border);
+                    box-sizing: border-box;
                     background-color: var(--vscode-input-background);
                     color: var(--vscode-input-foreground);
-                    border-radius: 2px;
+                    border: 1px solid var(--vscode-input-border);
                 }
                 textarea {
-                    min-height: 400px;
+                    min-height: 200px;
                     font-family: var(--vscode-editor-font-family);
-                    line-height: 1.5;
-                    tab-size: 2;
-                }
-                .button-container {
-                    margin-top: 20px;
-                    display: flex;
-                    gap: 10px;
-                    justify-content: flex-end;
                 }
                 button {
-                    padding: 8px 16px;
-                    border: none;
-                    color: var(--vscode-button-foreground);
+                    padding: 8px 12px;
+                    margin-right: 8px;
                     background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
                     cursor: pointer;
                 }
                 button:hover {
                     background-color: var(--vscode-button-hoverBackground);
                 }
-                button.secondary {
-                    background-color: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                }
-                button.secondary:hover {
-                    background-color: var(--vscode-button-secondaryHoverBackground);
-                }
-                .toolbar {
-                    margin-bottom: 10px;
+                .checkbox-container {
                     display: flex;
-                    gap: 10px;
-                }
-                .toolbar button {
-                    font-size: 12px;
-                    padding: 4px 8px;
-                }
-                .checkbox-group {
-                    display: flex;
-                    gap: 16px;
+                    gap: 15px;
                     margin-bottom: 10px;
                 }
                 .checkbox-label {
                     display: flex;
                     align-items: center;
+                    gap: 5px;
                     cursor: pointer;
                 }
                 .checkbox-label input {
                     width: auto;
-                    margin-right: 5px;
                 }
             </style>
         </head>
         <body>
-            <div class="header">
-                <img class="logo" src="${logoUri}" alt="Logo">
-                <h1>${defaultTitle}</h1>
-            </div>
-            <form id="releaseForm">
-                <div class="form-group">
-                    <label for="title">Release Title</label>
-                    <input type="text" id="title" value="${defaultTitle}" required>
+            <div class="container">
+                <div>
+                    <label for="version">Version</label>
+                    <input type="text" id="version" value="${version}" readonly>
                 </div>
-                <div class="form-group">
+                <div>
+                    <label for="title">Release Title (optional)</label>
+                    <input type="text" id="title" placeholder="Release ${version}">
+                </div>
+                <div>
                     <label for="notes">Release Notes</label>
-                    <div class="toolbar">
-                        <button type="button" id="resetNotes" class="secondary">Reset to Commit History</button>
-                        <button type="button" id="clearNotes" class="secondary">Clear</button>
-                    </div>
-                    <div class="checkbox-group">
+                    <div class="checkbox-container">
                         <label class="checkbox-label">
                             <input type="checkbox" id="showDate" ${showDate ? 'checked' : ''}>
                             Show Date
@@ -820,48 +750,41 @@ class ReleaseWebviewProvider {
                             <input type="checkbox" id="showAuthor" ${showAuthor ? 'checked' : ''}>
                             Show Author
                         </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="includeMessageBody" ${includeMessageBody ? 'checked' : ''}>
+                            Include Message Body
+                        </label>
                     </div>
                     <textarea id="notes" placeholder="Enter release notes...">${commitHistory}</textarea>
                 </div>
-                <div class="button-container">
-                    <button type="button" class="secondary" id="cancel">Cancel</button>
-                    <button type="submit">Create Release</button>
+                <div>
+                    <button id="create">Create Release</button>
+                    <button id="cancel">Cancel</button>
                 </div>
-            </form>
+            </div>
             <script>
                 const vscode = acquireVsCodeApi();
-                const commitHistory = ${JSON.stringify(commitHistory)};
                 
-                document.getElementById('releaseForm').addEventListener('submit', (e) => {
-                    e.preventDefault();
-                    vscode.postMessage({
-                        command: 'createRelease',
-                        title: document.getElementById('title').value,
-                        notes: document.getElementById('notes').value
-                    });
-                });
-
-                document.getElementById('cancel').addEventListener('click', () => {
-                    vscode.postMessage({ command: 'cancel' });
-                });
-
-                document.getElementById('resetNotes').addEventListener('click', () => {
-                    // Request a fresh changelog with current settings
-                    const showDate = document.getElementById('showDate').checked;
-                    const showAuthor = document.getElementById('showAuthor').checked;
+                document.getElementById('create').addEventListener('click', () => {
+                    const version = document.getElementById('version').value;
+                    const notes = document.getElementById('notes').value;
+                    const title = document.getElementById('title').value || undefined;
                     
                     vscode.postMessage({
-                        command: 'refreshChangelog',
-                        showDate: showDate,
-                        showAuthor: showAuthor
+                        command: 'createRelease',
+                        version,
+                        notes,
+                        title
                     });
                 });
-
-                document.getElementById('clearNotes').addEventListener('click', () => {
-                    document.getElementById('notes').value = '';
+                
+                document.getElementById('cancel').addEventListener('click', () => {
+                    vscode.postMessage({
+                        command: 'cancel'
+                    });
                 });
                 
-                // Add event listeners for changelog options
+                // Handle changelog preference changes
                 document.getElementById('showDate').addEventListener('change', () => {
                     refreshChangelog();
                 });
@@ -870,24 +793,29 @@ class ReleaseWebviewProvider {
                     refreshChangelog();
                 });
                 
+                document.getElementById('includeMessageBody').addEventListener('change', () => {
+                    refreshChangelog();
+                });
+                
                 function refreshChangelog() {
                     const showDate = document.getElementById('showDate').checked;
                     const showAuthor = document.getElementById('showAuthor').checked;
+                    const includeMessageBody = document.getElementById('includeMessageBody').checked;
                     
                     vscode.postMessage({
                         command: 'refreshChangelog',
                         showDate: showDate,
-                        showAuthor: showAuthor
+                        showAuthor: showAuthor,
+                        includeMessageBody: includeMessageBody
                     });
                 }
                 
-                // Listen for messages from the extension
+                // Handle messages from the extension
                 window.addEventListener('message', event => {
                     const message = event.data;
-                    switch (message.command) {
-                        case 'updateChangelog':
-                            document.getElementById('notes').value = message.changelog;
-                            break;
+                    
+                    if (message.command === 'updateChangelog') {
+                        document.getElementById('notes').value = message.changelog;
                     }
                 });
             </script>
@@ -895,81 +823,46 @@ class ReleaseWebviewProvider {
         </html>`;
     }
 
-    private async getCommitHistory(showDate: boolean = false, showAuthor: boolean = false): Promise<string> {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            return '';
-        }
+    private async getCommitHistory(showDate: boolean = false, showAuthor: boolean = false, includeMessageBody: boolean = false): Promise<string> {
+        return this.changelogGenerator.generateChangelog(showDate, showAuthor, includeMessageBody);
+    }
 
-        // Get changelog configuration
-        const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-        
-        // Use passed parameters instead if provided, otherwise fall back to config values
-        const useShowDate = showDate !== undefined ? showDate : config.get('changelogShowDate', false);
-        const useShowAuthor = showAuthor !== undefined ? showAuthor : config.get('changelogShowAuthor', false);
-
-        try {
-            // Try to get the last tag
-            let lastTag = '';
-            try {
-                lastTag = await execAsync('git describe --tags --abbrev=0', { 
-                    cwd: workspaceFolders[0].uri.fsPath 
-                }) as string;
-            } catch {
-                // No tags exist, will get all commits
-            }
-
-            // Build git log format based on user preferences
-            let formatString = '"- ';
-            if (useShowDate) {
-                formatString += '**%ad** ';
-            }
-            
-            formatString += '%s';
-            
-            if (useShowAuthor) {
-                formatString += ' _(by %an)_';
-            }
-            
-            formatString += '"';
-
-            // Get commit history with format based on user preferences
-            const gitLogCommand = lastTag
-                ? `git log ${lastTag.trim()}..HEAD --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
-                : `git log --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`;
-
-            const commitLog = await execAsync(gitLogCommand, { 
-                cwd: workspaceFolders[0].uri.fsPath 
-            }) as string;
-
-            if (!commitLog) {
-                return '### No new commits since last release.';
-            }
-
-            // Group commits by date
-            const commits = commitLog.split('\n');
-            let formattedOutput = '';
-            
-            // Get version from package.json
-            const currentVersion = getCurrentVersion();
-            
-            // Add a clear title with version info
-            formattedOutput = `# Release ${currentVersion}\n\n`;
-            
-            // Add a summary section showing what's changed since last tag
-            if (lastTag && lastTag.trim()) {
-                formattedOutput += `## Changes since ${lastTag.trim()}\n\n`;
-            } else {
-                formattedOutput += `## All Changes\n\n`;
-            }
-
-            // Add the commits, which are already formatted nicely
-            formattedOutput += commits.join('\n');
-
-            return formattedOutput;
-        } catch (error: any) {
-            console.error('Error getting commit history:', error);
-            return '### Failed to get commit history';
+    private _onDidReceiveMessage(message: any) {
+        switch (message.command) {
+            case 'createRelease':
+                vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: "Creating GitHub Release",
+                    cancellable: false
+                }, async () => {
+                    try {
+                        await createGitHubRelease(message.version, message.notes, message.title);
+                        this._view?.dispose();
+                    } catch (error: any) {
+                        vscode.window.showErrorMessage(`Failed to create release: ${error}`);
+                    }
+                });
+                break;
+            case 'cancel':
+                this._view?.dispose();
+                break;
+            case 'refreshChangelog':
+                // Update config with user selections
+                vscode.workspace.getConfiguration(EXTENSION_NAME).update('changelogShowDate', message.showDate, vscode.ConfigurationTarget.Global);
+                vscode.workspace.getConfiguration(EXTENSION_NAME).update('changelogShowAuthor', message.showAuthor, vscode.ConfigurationTarget.Global);
+                vscode.workspace.getConfiguration(EXTENSION_NAME).update('changelogIncludeMessageBody', message.includeMessageBody, vscode.ConfigurationTarget.Global);
+                
+                // Regenerate the changelog with the new preferences
+                this.changelogGenerator.generateChangelog(
+                    message.showDate, 
+                    message.showAuthor,
+                    message.includeMessageBody
+                ).then(newCommitHistory => {
+                    if (this._view) {
+                        this._view.webview.postMessage({ command: 'updateChangelog', changelog: newCommitHistory });
+                    }
+                });
+                break;
         }
     }
 }
@@ -1025,7 +918,7 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
             throw new Error('No workspace folder found');
         }
 
-        const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, PACKAGE_JSON);
+        const packageJsonPath = path.join(workspaceFolders[0].uri.fsPath, 'package.json');
         if (!fs.existsSync(packageJsonPath)) {
             throw new Error('package.json not found');
         }
@@ -1266,7 +1159,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 });
                 
                 // Only update input box if the message doesn't already contain a version
-                if (!message.match(/v\d+\.\d+\.\d+/)) {
+                if (currentVersionMode !== 'none' && currentVersion !== nextVersion && !message.includes(`v${nextVersion}`)) {
                     versionProvider.updateInputBox();
                 }
                 
@@ -1643,7 +1536,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     // Create and register the webview provider
-    const releaseWebviewProvider = new ReleaseWebviewProvider(context.extensionUri);
+    const releaseWebviewProvider = new ReleaseWebviewProvider(context);
 
     // Load configuration
     // const config = vscode.workspace.getConfiguration(EXTENSION_NAME);

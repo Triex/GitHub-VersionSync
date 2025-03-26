@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -206,6 +206,11 @@
           "type": "boolean",
           "default": false,
           "description": "Include authors in the changelog"
+        },
+        "github-versionsync.changelogIncludeMessageBody": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include the full commit message body in the changelog, not just the first line"
         },
         "github-versionsync.releasePrefix": {
           "type": "string",
