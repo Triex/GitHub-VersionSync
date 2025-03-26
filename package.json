@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -253,7 +253,6 @@
         },
         "github-versionsync.versionFormat": {
           "type": "string",
-          "default": "arrow",
           "enum": [
             "arrow",
             "bump",
@@ -261,7 +260,8 @@
             "release",
             "brackets"
           ],
-          "description": "Format for version in commit messages: arrow (→), bump (⇧), simple (v), release (📦), or brackets ((v))"
+          "default": "arrow",
+          "description": "Format for displaying version in commit messages. Examples:\n- arrow: 'feat: My feature → v1.2.3'\n- bump: 'feat: My feature ⇧ v1.2.3'\n- simple: 'feat: My feature v1.2.3'\n- release: 'feat: My feature 📦 v1.2.3'\n- brackets: 'feat: My feature (v1.2.3)'"
         }
       }
     },

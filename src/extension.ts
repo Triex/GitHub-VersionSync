@@ -987,13 +987,17 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                     // Create updated commit message with version info if not already present
                     let newMessage = commitMsg.trim();
                     if (!newMessage.includes(`v${version}`)) {
-                        if (newMessage.match(/v\d+\.\d+\.\d+/)) {
-                            // Replace existing version in commit message
-                            newMessage = newMessage.replace(/v\d+\.\d+\.\d+/, `v${version}`);
-                        } else {
-                            // Append version to commit message
-                            newMessage = `${newMessage} v${version}`;
-                        }
+                        // Add version to commit message using a clean format
+                        const versionFormats = {
+                            'arrow': `${newMessage} → v${version}`,
+                            'bump': `${newMessage} ⇧ v${version}`,
+                            'simple': `${newMessage} v${version}`,
+                            'release': `${newMessage} 📦 v${version}`,
+                            'brackets': `${newMessage} (v${version})`
+                        };
+                        
+                        const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
+                        newMessage = versionFormats[format] || versionFormats.simple;
                     }
                     
                     console.log('Amending commit with message:', newMessage);
@@ -1263,13 +1267,16 @@ export async function activate(context: vscode.ExtensionContext) {
                                 // Create updated commit message with version info if not already present
                                 let newMessage = commitMsg.trim();
                                 if (!newMessage.includes(`v${nextVer}`)) {
-                                    if (newMessage.match(/v\d+\.\d+\.\d+/)) {
-                                        // Replace existing version in commit message
-                                        newMessage = newMessage.replace(/v\d+\.\d+\.\d+/, `v${nextVer}`);
-                                    } else {
-                                        // Append version to commit message
-                                        newMessage = `${newMessage} v${nextVer}`;
-                                    }
+                                    const versionFormats = {
+                                        'arrow': `${newMessage} → v${nextVer}`,
+                                        'bump': `${newMessage} ⇧ v${nextVer}`,
+                                        'simple': `${newMessage} v${nextVer}`,
+                                        'release': `${newMessage} 📦 v${nextVer}`,
+                                        'brackets': `${newMessage} (v${nextVer})`
+                                    };
+                                    
+                                    const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
+                                    newMessage = versionFormats[format] || versionFormats.simple;
                                 }
                                 
                                 console.log('Amending commit with message:', newMessage);
