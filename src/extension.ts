@@ -1,6 +1,7 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import { Octokit } from 'octokit';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
@@ -46,7 +47,7 @@ function updateTitle() {
     
     const currentVersion = versionProvider.getCurrentVersion();
     nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
-    lastCalculatedVersion = nextVersion;
+    lastCalculatedVersion = currentVersion;
     
     // Keep the main title simple
     treeView.title = 'Version Control';
@@ -60,8 +61,10 @@ function updateTitle() {
         versionProvider.updateInputBox();
     }
     
-    // Force a refresh of the tree view
-    vscode.commands.executeCommand('workbench.action.refreshTree');
+    // Force a refresh by calling the refresh method directly
+    if (versionProvider) {
+        versionProvider.refresh();
+    }
 }
 
 // Update status bar with current version mode
@@ -166,46 +169,84 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 throw new Error('package.json not found');
             }
 
-            // Read the current package.json
-            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-            
-            // Only update if the version is actually different
-            if (packageJson.version !== version) {
-                // Store old version for comparison
-                const oldVersion = packageJson.version;
+            try {
+                // First check if there are any other changes to package.json
+                // If so, we need to stash them first so we only commit version changes
+                const hasChanges = await execAsync(`git diff --quiet -- "${packageJsonPath}" || echo "changes"`, { 
+                    cwd: workspaceFolder.uri.fsPath 
+                });
                 
-                // Update version in package.json first
-                packageJson.version = version;
-                const updatedContent = JSON.stringify(packageJson, null, 2);
-                fs.writeFileSync(packageJsonPath, updatedContent);
+                let needsStash = hasChanges.trim() === "changes";
+                let stashCreated = false;
                 
-                // Reset the cached version to force recalculation
-                this.lastCalculatedVersion = undefined;
-                lastCalculatedVersion = undefined; // Reset global version cache too
-                nextVersion = '';
+                if (needsStash) {
+                    console.log('Detected other changes to package.json, stashing before version update');
+                    // Stash only the package.json changes
+                    await execAsync(`git stash push -m "temp stash for version change" -- "${packageJsonPath}"`, { 
+                        cwd: workspaceFolder.uri.fsPath 
+                    });
+                    stashCreated = true;
+                    console.log('Stashed other changes to package.json');
+                }
                 
-                console.log(`Updated package.json version from ${oldVersion} to ${version}`);
-                
-                // Only set shouldUpdateVersion to true when we've actually updated the version
-                shouldUpdateVersion = true;
-                
-                // Force a refresh of the UI after version update with a small delay
-                setTimeout(() => {
-                    this.refresh();
+                try {
+                    // Read the current package.json
+                    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
                     
-                    // Update UI components after refresh
-                    setTimeout(() => {
-                        updateVersionStatusBar();
-                        updateTitle();
-                    }, 50);
-                }, 100);
-            } else {
-                console.log(`Version ${version} already set in package.json, no update needed`);
+                    // Only update if the version is actually different
+                    if (packageJson.version !== version) {
+                        // Store old version for comparison
+                        const oldVersion = packageJson.version;
+                        
+                        // Update version in package.json
+                        packageJson.version = version;
+                        const updatedContent = JSON.stringify(packageJson, null, 2);
+                        fs.writeFileSync(packageJsonPath, updatedContent);
+                        
+                        console.log(`Updated package.json with only version change from ${oldVersion} to ${version}`);
+                        
+                        // Reset the cached version to force recalculation
+                        this.lastCalculatedVersion = undefined;
+                        lastCalculatedVersion = undefined; // Reset global version cache too
+                        nextVersion = '';
+                        
+                        // Only set shouldUpdateVersion to true when we've actually updated the version
+                        shouldUpdateVersion = true;
+                        
+                        // Force a refresh of the UI after version update with a small delay
+                        setTimeout(() => {
+                            this.refresh();
+                            
+                            // Update UI components after refresh
+                            setTimeout(() => {
+                                updateVersionStatusBar();
+                            }, 100);
+                        }, 200);
+                        
+                        vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
+                    } else {
+                        console.log(`Version already set to ${version}, no update needed`);
+                    }
+                } finally {
+                    // If we stashed changes, pop them back
+                    if (stashCreated) {
+                        console.log('Restoring stashed changes to package.json');
+                        try {
+                            await execAsync('git stash pop', { cwd: workspaceFolder.uri.fsPath });
+                            console.log('Successfully restored stashed changes');
+                        } catch (stashError) {
+                            console.error('Failed to restore stashed changes - may need manual intervention:', stashError);
+                            vscode.window.showWarningMessage(
+                                'Version update succeeded, but there were conflicts restoring other package.json changes. ' +
+                                'You may need to resolve these manually with `git stash pop`.'
+                            );
+                        }
+                    }
+                }
+            } catch (error: any) {
+                console.error('Error updating version:', error);
+                vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
             }
-        } catch (error: any) {
-            console.error('Error updating version:', error);
-            vscode.window.showErrorMessage(`Failed to update version: ${error.message || 'Unknown error'}`);
-            throw error;
         } finally {
             isUpdatingVersion = false;
         }
@@ -217,9 +258,6 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         try {
             console.log('Refreshing version provider tree view');
             this._onDidChangeTreeData.fire();
-            
-            // Force VS Code to refresh the tree view
-            vscode.commands.executeCommand('workbench.action.refreshTree');
         } finally {
             isRefreshing = false;
         }
@@ -901,111 +939,104 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 }
             }
             
-            // Update version in package.json
-            packageJson.version = version;
-            const updatedContent = JSON.stringify(packageJson, null, 2);
-            fs.writeFileSync(packageJsonPath, updatedContent);
-            console.log(`Updated package.json file with version ${version}`);
-
+            console.log('Updating version in git repo:', workspaceFolders[0].uri.fsPath);
+            console.log('Relative path to package.json:', packageJsonPath);
+            
             try {
-                // Get the git root directory
-                const gitRoot = await execAsync('git rev-parse --show-toplevel', { cwd: workspaceFolders[0].uri.fsPath });
-                const relativePath = path.relative(gitRoot.trim(), packageJsonPath);
+                // First check if there are any other changes to package.json
+                // If so, we need to stash them first so we only commit version changes
+                const hasChanges = await execAsync(`git diff --quiet -- "${packageJsonPath}" || echo "changes"`, { 
+                    cwd: workspaceFolders[0].uri.fsPath 
+                });
                 
-                // Create a patch file for just the version change
-                const patchFile = path.join(workspaceFolders[0].uri.fsPath, '.version-patch');
+                let needsStash = hasChanges.trim() === "changes";
+                let stashCreated = false;
                 
-                // Get the line number for the version in package.json
-                const originalLines = fs.readFileSync(packageJsonPath, 'utf-8').split('\n');
-                const updatedLines = updatedContent.split('\n');
-                let versionLineNumber = -1;
-                
-                for (let i = 0; i < originalLines.length; i++) {
-                    if (originalLines[i].includes('"version"')) {
-                        versionLineNumber = i + 1; // 1-based line numbers in patches
-                        break;
-                    }
+                if (needsStash) {
+                    console.log('Detected other changes to package.json, stashing before version update');
+                    // Stash only the package.json changes
+                    await execAsync(`git stash push -m "temp stash for version change" -- "${packageJsonPath}"`, { 
+                        cwd: workspaceFolders[0].uri.fsPath 
+                    });
+                    stashCreated = true;
+                    console.log('Stashed other changes to package.json');
                 }
-                
-                if (versionLineNumber === -1) {
-                    throw new Error('Could not find version line in package.json');
-                }
-                
-                // Get the exact version lines from both files
-                const oldVersionLine = originalLines[versionLineNumber - 1];
-                const newVersionLine = updatedLines[versionLineNumber - 1];
-                
-                // Create a proper git patch with just the version line change
-                const patch = `diff --git a/${relativePath} b/${relativePath}
-index 0000000..0000000 100644
---- a/${relativePath}
-+++ b/${relativePath}
-@@ -${versionLineNumber},1 +${versionLineNumber},1 @@
--  "version": "${oldVersion}",
-+  "version": "${version}"`;
-                
-                fs.writeFileSync(patchFile, patch);
-                console.log('Patch file created:', patchFile);
-                console.log('Patch content:', patch);
                 
                 try {
-                    // Apply the patch to stage only the version change
-                    await execAsync(`git apply --cached ${patchFile}`, { cwd: workspaceFolders[0].uri.fsPath });
-                    console.log('Applied patch to stage only version change');
+                    // Now read the current package.json without other pending changes
+                    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                    const oldVersion = packageJson.version;
                     
-                    // Amend the commit with the new message
-                    await execAsync(`git commit --amend -m "${escapeCommitMessage(version)}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                    // Update only the version
+                    packageJson.version = version;
+                    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                    console.log(`Updated package.json with only version change to ${version}`);
+                    
+                    // Stage only the package.json file
+                    await execAsync(`git add "${packageJsonPath}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                    console.log(`Staged ${packageJsonPath} with version change only`);
+                    
+                    // Show what's staged
+                    const diffCachedCmd = 'git diff --cached';
+                    const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolders[0].uri.fsPath });
+                    console.log('Staged changes:', stagedChanges);
+                    
+                    // Get the current commit message
+                    const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolders[0].uri.fsPath });
+                    
+                    // Create updated commit message with version info if not already present
+                    let newMessage = commitMsg.trim();
+                    if (!newMessage.includes(`v${version}`)) {
+                        if (newMessage.match(/v\d+\.\d+\.\d+/)) {
+                            // Replace existing version in commit message
+                            newMessage = newMessage.replace(/v\d+\.\d+\.\d+/, `v${version}`);
+                        } else {
+                            // Append version to commit message
+                            newMessage = `${newMessage} v${version}`;
+                        }
+                    }
+                    
+                    console.log('Amending commit with message:', newMessage);
+                    // Amend the commit with the updated message
+                    await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { 
+                        cwd: workspaceFolders[0].uri.fsPath 
+                    });
                     
                     console.log('Updated version in package.json to:', version);
                     vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
-                } catch (error: any) {
-                    console.error('Error applying patch:', error);
                     
-                    // Fallback to staging the entire file
-                    console.log('Falling back to staging entire file');
-                    await execAsync('git add package.json', { cwd: workspaceFolders[0].uri.fsPath });
-                    
-                    // Amend the commit with the new message
-                    await execAsync(`git commit --amend -m "${escapeCommitMessage(version)}"`, { cwd: workspaceFolders[0].uri.fsPath });
-                    
-                    console.log('Updated version in package.json to:', version);
-                    vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
                 } finally {
-                    // Clean up the patch file
-                    if (fs.existsSync(patchFile)) {
-                        fs.unlinkSync(patchFile);
-                        console.log('Cleaned up patch file');
+                    // If we stashed changes, pop them back
+                    if (stashCreated) {
+                        console.log('Restoring stashed changes to package.json');
+                        try {
+                            await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
+                            console.log('Successfully restored stashed changes');
+                        } catch (stashError) {
+                            console.error('Failed to restore stashed changes - may need manual intervention:', stashError);
+                            vscode.window.showWarningMessage(
+                                'Version update succeeded, but there were conflicts restoring other package.json changes. ' +
+                                'You may need to resolve these manually with `git stash pop`.'
+                            );
+                        }
                     }
                 }
             } catch (error: any) {
                 console.error('Error updating version:', error);
-                vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
+                vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
             }
-        } else {
-            console.log(`Version already at ${version}, no update needed`);
         }
-        
-        // Reset version state after update
-        lastCalculatedVersion = undefined;
-        nextVersion = '';
-        
-        // Force a refresh of the version provider
-        versionProvider.refresh();
-        
-        // Update UI components after refresh
-        setTimeout(() => {
-            if (versionStatusBarItem) {
-                updateVersionStatusBar();
-            }
-            if (treeView) {
-                updateTitle();
-            }
-        }, 150);
     } catch (error: any) {
         console.error('Error updating version after commit:', error);
         vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
     } finally {
         isUpdatingVersion = false;
+        // Force a refresh after commit is complete
+        setTimeout(() => {
+            versionProvider.refresh();
+            updateVersionStatusBar();
+            updateTitle();
+        }, 150);
     }
 }
 
@@ -1185,69 +1216,84 @@ export async function activate(context: vscode.ExtensionContext) {
                             const gitRoot = await execAsync('git rev-parse --show-toplevel', { cwd: workspaceFolders[0].uri.fsPath });
                             const relativePath = path.relative(gitRoot.trim(), packageJsonPath);
                             
-                            // Create a patch file for just the version change
-                            const patchFile = path.join(workspaceFolders[0].uri.fsPath, '.version-patch');
+                            console.log('Updating version in git repo:', gitRoot.trim());
+                            console.log('Relative path to package.json:', relativePath);
                             
-                            // Get the line number for the version in package.json
-                            const originalLines = originalContent.split('\n');
-                            const updatedLines = updatedContent.split('\n');
-                            let versionLineNumber = -1;
+                            // First check if there are any other changes to package.json
+                            // If so, we need to stash them first so we only commit version changes
+                            const hasChanges = await execAsync(`git diff --quiet -- "${relativePath}" || echo "changes"`, { 
+                                cwd: workspaceFolders[0].uri.fsPath 
+                            });
                             
-                            for (let i = 0; i < originalLines.length; i++) {
-                                if (originalLines[i].includes('"version"')) {
-                                    versionLineNumber = i + 1; // 1-based line numbers in patches
-                                    break;
-                                }
+                            let needsStash = hasChanges.trim() === "changes";
+                            let stashCreated = false;
+                            
+                            if (needsStash) {
+                                console.log('Detected other changes to package.json, stashing before version update');
+                                // Stash only the package.json changes
+                                await execAsync(`git stash push -m "temp stash for version change" -- "${relativePath}"`, { 
+                                    cwd: workspaceFolders[0].uri.fsPath 
+                                });
+                                stashCreated = true;
+                                console.log('Stashed other changes to package.json');
                             }
-                            
-                            if (versionLineNumber === -1) {
-                                throw new Error('Could not find version line in package.json');
-                            }
-                            
-                            // Get the exact version lines from both files
-                            const oldVersionLine = originalLines[versionLineNumber - 1];
-                            const newVersionLine = updatedLines[versionLineNumber - 1];
-                            
-                            // Create a proper git patch with just the version line change
-                            const patch = `diff --git a/${relativePath} b/${relativePath}
-index 0000000..0000000 100644
---- a/${relativePath}
-+++ b/${relativePath}
-@@ -${versionLineNumber},1 +${versionLineNumber},1 @@
--  "version": "${oldVersion}",
-+  "version": "${nextVer}"`;
-                            
-                            fs.writeFileSync(patchFile, patch);
-                            console.log('Patch file created:', patchFile);
-                            console.log('Patch content:', patch);
                             
                             try {
-                                // Apply the patch to stage only the version change
-                                await execAsync(`git apply --cached ${patchFile}`, { cwd: workspaceFolders[0].uri.fsPath });
-                                console.log('Applied patch to stage only version change');
+                                // Now read the current package.json without other pending changes
+                                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                                const oldVersion = packageJson.version;
                                 
-                                // Amend the commit with the new message
-                                await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                // Update only the version
+                                packageJson.version = nextVer;
+                                fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                                console.log(`Updated package.json with only version change to ${nextVer}`);
                                 
-                                console.log('Updated version in package.json to:', nextVer);
-                                vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${nextVer}`);
-                            } catch (error: any) {
-                                console.error('Error applying patch:', error);
+                                // Stage only the package.json file
+                                await execAsync(`git add "${relativePath}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                console.log(`Staged ${relativePath} with version change only`);
                                 
-                                // Fallback to staging the entire file
-                                console.log('Falling back to staging entire file');
-                                await execAsync('git add package.json', { cwd: workspaceFolders[0].uri.fsPath });
+                                // Show what's staged
+                                const diffCachedCmd = 'git diff --cached';
+                                const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolders[0].uri.fsPath });
+                                console.log('Staged changes:', stagedChanges);
                                 
-                                // Amend the commit with the new message
-                                await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                // Get the current commit message
+                                const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolders[0].uri.fsPath });
+                                
+                                // Create updated commit message with version info if not already present
+                                let newMessage = commitMsg.trim();
+                                if (!newMessage.includes(`v${nextVer}`)) {
+                                    if (newMessage.match(/v\d+\.\d+\.\d+/)) {
+                                        // Replace existing version in commit message
+                                        newMessage = newMessage.replace(/v\d+\.\d+\.\d+/, `v${nextVer}`);
+                                    } else {
+                                        // Append version to commit message
+                                        newMessage = `${newMessage} v${nextVer}`;
+                                    }
+                                }
+                                
+                                console.log('Amending commit with message:', newMessage);
+                                // Amend the commit with the updated message
+                                await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { 
+                                    cwd: workspaceFolders[0].uri.fsPath 
+                                });
                                 
                                 console.log('Updated version in package.json to:', nextVer);
                                 vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${nextVer}`);
                             } finally {
-                                // Clean up the patch file
-                                if (fs.existsSync(patchFile)) {
-                                    fs.unlinkSync(patchFile);
-                                    console.log('Cleaned up patch file');
+                                // If we stashed changes, pop them back
+                                if (stashCreated) {
+                                    console.log('Restoring stashed changes to package.json');
+                                    try {
+                                        await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
+                                        console.log('Successfully restored stashed changes');
+                                    } catch (stashError) {
+                                        console.error('Failed to restore stashed changes - may need manual intervention:', stashError);
+                                        vscode.window.showWarningMessage(
+                                            'Version update succeeded, but there were conflicts restoring other package.json changes. ' +
+                                            'You may need to resolve these manually with `git stash pop`.'
+                                        );
+                                    }
                                 }
                             }
                         } catch (error: any) {
