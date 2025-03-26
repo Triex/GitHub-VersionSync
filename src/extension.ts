@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChangelogGenerator, EXTENSION_NAME } from './changelog';
+import { extensionState } from './extensionState';
 
 const EXTENSION_NAME_OLD = 'github-versionsync';
 let enableGitHubRelease = false;
@@ -18,9 +19,6 @@ let isUpdatingVersion = false;  // Add flag to prevent recursive version updates
 let shouldUpdateVersion = false; // Flag to control version updates during commit
 let lastCalculatedVersion: string | undefined;  // Track last calculated version
 let isRefreshing = false;
-let versionStatusBarItem: vscode.StatusBarItem;
-let versionProvider: VersionProvider;  // Make versionProvider globally accessible
-let treeView: vscode.TreeView<vscode.TreeItem>; // Make treeView globally accessible
 
 // Add back the execAsync function
 async function execAsync(command: string, options: cp.ExecOptions): Promise<string> {
@@ -43,33 +41,33 @@ function getVersionTypeDisplay(type: VersionType): string {
 
 // Update title when versions change
 function updateTitle() {
-    if (!treeView || !versionProvider) return;
+    if (!extensionState.treeView || !extensionState.versionProvider) return;
     
-    const currentVersion = versionProvider.getCurrentVersion();
-    nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    const currentVersion = extensionState.versionProvider.getCurrentVersion();
+    nextVersion = customVersion || extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
     lastCalculatedVersion = currentVersion;
     
     // Keep the main title simple
-    treeView.title = 'Version Control';
+    extensionState.treeView.title = 'Version Control';
     
     // Show version details in the description
-    treeView.description = currentVersionMode === 'none' ? 
+    extensionState.treeView.description = currentVersionMode === 'none' ? 
         `${currentVersion} [No Change]` :
         `${currentVersion} → ${nextVersion} [${getVersionTypeDisplay(currentVersionMode)}]`;
     
-    if (versionProvider) {
-        versionProvider.updateInputBox();
+    if (extensionState.versionProvider) {
+        extensionState.versionProvider.updateInputBox();
     }
     
     // Force a refresh by calling the refresh method directly
-    if (versionProvider) {
-        versionProvider.refresh();
+    if (extensionState.versionProvider) {
+        extensionState.versionProvider.refresh();
     }
 }
 
 // Update status bar with current version mode
 function updateVersionStatusBar() {
-    if (!versionStatusBarItem) return;
+    if (!extensionState.versionStatusBarItem) return;
     
     const modeEmojis: Record<string, string> = {
         'patch': '🐛',
@@ -79,9 +77,9 @@ function updateVersionStatusBar() {
         'custom': '✏️'
     };
     
-    versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
-    versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
-    versionStatusBarItem.show();
+    extensionState.versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
+    extensionState.versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
+    extensionState.versionStatusBarItem.show();
 }
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
@@ -355,11 +353,34 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 
 async function getGitHubToken(): Promise<string | undefined> {
     try {
-        // Try to get the session
-        const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
-        return session?.accessToken;
+        // Check if the extension is in a healthy state
+        if (!extensionState.isHealthy) {
+            console.log('Extension in unhealthy state, skipping GitHub auth');
+            return undefined;
+        }
+        
+        // Try to get the session without forcing creation
+        const session = await vscode.authentication.getSession('github', ['repo'], { 
+            createIfNone: false,
+            silent: true // Don't show any UI to avoid blocking
+        });
+        
+        if (session) {
+            // If we successfully get a token, reset our error state
+            extensionState.recover();
+            return session.accessToken;
+        } else {
+            console.log('No GitHub session available');
+            return undefined;
+        }
     } catch (error: any) {
         console.error('GitHub Authentication Error:', error);
+        
+        // Mark extension as unhealthy and recommend window reload
+        if (!extensionState.hasShownError) {
+            extensionState.showStateWarning('GitHub authentication failed. This may be due to an extension host issue');
+        }
+        
         return undefined;
     }
 }
@@ -1064,7 +1085,7 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
         isUpdatingVersion = false;
         // Force a refresh after commit is complete
         setTimeout(() => {
-            versionProvider.refresh();
+            extensionState.versionProvider.refresh();
             updateVersionStatusBar();
             updateTitle();
         }, 150);
@@ -1092,8 +1113,12 @@ function debounce(func: Function, wait: number) {
 export async function activate(context: vscode.ExtensionContext) {
     console.log('Activating github-versionsync extension');
 
+    // Initialize extension state with context
+    extensionState.initialize(context);
+    console.log('Extension state initialized');
+
     // Create the version provider and initialize state
-    versionProvider = new VersionProvider();
+    extensionState.versionProvider = new VersionProvider();
     console.log('Version provider created');
 
     // Load configuration once at the top
@@ -1104,8 +1129,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize version state
     currentVersionMode = 'patch'; // Default to patch
-    let currentVersion = versionProvider.getCurrentVersion();
-    nextVersion = versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    let currentVersion = extensionState.versionProvider.getCurrentVersion();
+    nextVersion = extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
     console.log('Version state initialized:', { currentVersion, nextVersion, currentVersionMode });
 
     // Get the git extension and API once
@@ -1140,7 +1165,7 @@ export async function activate(context: vscode.ExtensionContext) {
             console.log('Found repository for current workspace:', currentRepo.rootUri.fsPath);
 
             // Set the current repo in the version provider
-            versionProvider.setCurrentRepo(currentRepo);
+            extensionState.versionProvider.setCurrentRepo(currentRepo);
 
             // Watch for repository state changes with debouncing
             const debouncedStateChange = debounce(() => {
@@ -1150,7 +1175,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
                 lastProcessedMessage = message;
                 
-                currentVersion = versionProvider.getCurrentVersion();
+                currentVersion = extensionState.versionProvider.getCurrentVersion();
                 console.log('Repository state changed, message:', message);
                 console.log('Current version state:', {
                     currentVersion,
@@ -1160,13 +1185,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 
                 // Only update input box if the message doesn't already contain a version
                 if (currentVersionMode !== 'none' && currentVersion !== nextVersion && !message.includes(`v${nextVersion}`)) {
-                    versionProvider.updateInputBox();
+                    extensionState.versionProvider.updateInputBox();
                 }
                 
                 // Force UI refresh
                 updateVersionStatusBar();
                 updateTitle();
-                versionProvider.refresh();
+                extensionState.versionProvider.refresh();
             }, 300);
 
             // Track last processed message to prevent duplicate processing
@@ -1188,7 +1213,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     
                     const message = currentRepo.inputBox.value;
                     if (!message.match(/v\d+\.\d+\.\d+/) && !isCommitting) {
-                        const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+                        const nextVer = nextVersion || extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
                         currentRepo.inputBox.value = `${message.trim()} v${nextVer}`;
                     }
                 }
@@ -1199,7 +1224,7 @@ export async function activate(context: vscode.ExtensionContext) {
             currentRepo.onDidCommit(async () => {
                 try {
                     isCommitting = true;
-                    const nextVer = nextVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+                    const nextVer = nextVersion || extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
                     
                     // Get the workspace folder for this repository
                     const workspaceFolder = vscode.workspace.getWorkspaceFolder(currentRepo.rootUri);
@@ -1342,7 +1367,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     isCommitting = false;
                     // Force a refresh after commit is complete
                     setTimeout(() => {
-                        versionProvider.refresh();
+                        extensionState.versionProvider.refresh();
                         updateVersionStatusBar();
                         updateTitle();
                     }, 150);
@@ -1350,7 +1375,7 @@ export async function activate(context: vscode.ExtensionContext) {
             });
 
             // Initial update
-            versionProvider.updateInputBox();
+            extensionState.versionProvider.updateInputBox();
         }
     }
 
@@ -1388,34 +1413,42 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         console.log('Current version mode:', currentVersionMode);
-        console.log('Current version:', versionProvider.getCurrentVersion());
+        console.log('Current version:', extensionState.versionProvider.getCurrentVersion());
         console.log('Next version:', nextVersion);
         console.log('Enable auto tag:', enableAutoTag);
         console.log('Enable GitHub release:', enableGitHubRelease);
         
         console.log('Refreshing version provider');
-        versionProvider.refresh();
+        extensionState.versionProvider.refresh();
         vscode.window.showInformationMessage('Test command executed successfully!');
     });
     context.subscriptions.push(testCommand);
 
     // Create and register the tree view
-    treeView = vscode.window.createTreeView('scm-version-selector', {
-        treeDataProvider: versionProvider,
+    extensionState.treeView = vscode.window.createTreeView('scm-version-selector', {
+        treeDataProvider: extensionState.versionProvider,
         showCollapseAll: false
     });
-    context.subscriptions.push(treeView);
+    context.subscriptions.push(extensionState.treeView);
+
+    // Force refresh the tree view to ensure it initializes properly after reload
+    setTimeout(() => {
+        if (extensionState.versionProvider) {
+            extensionState.versionProvider.refresh();
+            updateTitle();
+        }
+    }, 500);
 
     // Initial title update without triggering version change
-    // const currentVersion = versionProvider.getCurrentVersion();
-    nextVersion = customVersion || versionProvider.bumpVersion(currentVersion, currentVersionMode);
+    // const currentVersion = extensionState.versionProvider.getCurrentVersion();
+    nextVersion = customVersion || extensionState.versionProvider.bumpVersion(currentVersion, currentVersionMode);
     lastCalculatedVersion = nextVersion;
     updateTitle();
 
     // Create status bar item
-    versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    versionStatusBarItem.command = 'github-versionsync.selectVersionType';
-    context.subscriptions.push(versionStatusBarItem);
+    extensionState.versionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    extensionState.versionStatusBarItem.command = 'github-versionsync.selectVersionType';
+    context.subscriptions.push(extensionState.versionStatusBarItem);
 
     // Update status bar with current version mode
     updateVersionStatusBar();
@@ -1462,8 +1495,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     console.log('Version type selected:', type);
                     currentVersionMode = type;
                     customVersion = undefined;
-                    const currentVersion = versionProvider.getCurrentVersion();
-                    nextVersion = type === 'none' ? currentVersion : versionProvider.bumpVersion(currentVersion, type);
+                    const currentVersion = extensionState.versionProvider.getCurrentVersion();
+                    nextVersion = type === 'none' ? currentVersion : extensionState.versionProvider.bumpVersion(currentVersion, type);
                 }
                 
                 console.log('Updating version status bar');
@@ -1474,7 +1507,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 
                 // Add a delay before refreshing to ensure all state changes are processed
                 setTimeout(() => {
-                    versionProvider.refresh();
+                    extensionState.versionProvider.refresh();
                 }, 100);
             }
         })
@@ -1497,7 +1530,7 @@ export async function activate(context: vscode.ExtensionContext) {
             await config.update('enableGitHubRelease', !currentEnabled, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(`Automatic GitHub releases ${!currentEnabled ? 'enabled' : 'disabled'}`);
             console.log('Refreshing version provider');
-            versionProvider.refresh();
+            extensionState.versionProvider.refresh();
         })
     );
 
@@ -1619,4 +1652,8 @@ async function checkRemoteExists(cwd: string): Promise<boolean> {
     } catch (error) {
         return false;
     }
+}
+
+function showExtensionStateWarning(message: string) {
+    extensionState.showStateWarning(message);
 }
