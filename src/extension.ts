@@ -541,7 +541,6 @@ class ReleaseWebviewProvider {
         
         // Get configuration values
         const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-        const generateChangelog = config.get('generateChangelog', true);
         const showDate = config.get('changelogShowDate', false);
         const showAuthor = config.get('changelogShowAuthor', false);
         
@@ -642,10 +641,6 @@ class ReleaseWebviewProvider {
                     </div>
                     <div class="checkbox-group">
                         <label class="checkbox-label">
-                            <input type="checkbox" id="generateChangelog" ${generateChangelog ? 'checked' : ''}>
-                            Generate Changelog
-                        </label>
-                        <label class="checkbox-label">
                             <input type="checkbox" id="showDate" ${showDate ? 'checked' : ''}>
                             Show Date
                         </label>
@@ -679,7 +674,15 @@ class ReleaseWebviewProvider {
                 });
 
                 document.getElementById('resetNotes').addEventListener('click', () => {
-                    refreshChangelog();
+                    // Request a fresh changelog with current settings
+                    const showDate = document.getElementById('showDate').checked;
+                    const showAuthor = document.getElementById('showAuthor').checked;
+                    
+                    vscode.postMessage({
+                        command: 'refreshChangelog',
+                        showDate: showDate,
+                        showAuthor: showAuthor
+                    });
                 });
 
                 document.getElementById('clearNotes').addEventListener('click', () => {
@@ -687,16 +690,15 @@ class ReleaseWebviewProvider {
                 });
                 
                 // Add event listeners for changelog options
-                document.getElementById('generateChangelog').addEventListener('change', refreshChangelog);
-                document.getElementById('showDate').addEventListener('change', refreshChangelog);
-                document.getElementById('showAuthor').addEventListener('change', refreshChangelog);
+                document.getElementById('showDate').addEventListener('change', () => {
+                    refreshChangelog();
+                });
+                
+                document.getElementById('showAuthor').addEventListener('change', () => {
+                    refreshChangelog();
+                });
                 
                 function refreshChangelog() {
-                    const generateChangelog = document.getElementById('generateChangelog').checked;
-                    if (!generateChangelog) {
-                        return;
-                    }
-                    
                     const showDate = document.getElementById('showDate').checked;
                     const showAuthor = document.getElementById('showAuthor').checked;
                     
@@ -707,7 +709,9 @@ class ReleaseWebviewProvider {
                     });
                 }
                 
-                vscode.onDidReceiveMessage((message) => {
+                // Listen for messages from the extension
+                window.addEventListener('message', event => {
+                    const message = event.data;
                     switch (message.command) {
                         case 'updateChangelog':
                             document.getElementById('notes').value = message.changelog;
