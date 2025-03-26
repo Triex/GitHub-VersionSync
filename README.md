@@ -1,4 +1,4 @@
-# GitHub Version Sync
+# GitHub Version Sync 🚀
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
