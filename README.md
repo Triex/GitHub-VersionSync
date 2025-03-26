@@ -150,6 +150,43 @@ The extension supports automated release workflows through the `preReleaseComman
    ```
    Supports glob patterns for flexible file matching.
 
+## Smart Release Asset Selection
+
+When creating GitHub releases, GitHub Version Sync will automatically select the latest version of each package type to include as release assets. This means:
+
+1. You can use simple glob patterns like `*.vsix` in the `includePackageFiles` setting
+2. Only the most recently modified file of each package type will be included in the release
+3. Old versions of the same package won't clutter your GitHub release
+
+### How It Works
+
+The extension groups files with similar base names (ignoring version numbers) and selects only the most recently modified file from each group. For example, if you have:
+
+```
+my-extension-0.1.0.vsix  (older)
+my-extension-0.2.0.vsix  (newer)
+other-package-1.0.0.zip
+```
+
+And your settings include `["*.vsix", "*.zip"]`, the extension will only include:
+- `my-extension-0.2.0.vsix` (the latest version)
+- `other-package-1.0.0.zip` (the only version)
+
+This ensures your releases always include the most up-to-date versions without requiring you to manually specify exact filenames.
+
+### Configuration
+
+Configure which files to include in your releases:
+
+```json
+"github-versionsync.includePackageFiles": [
+  "*.vsix",
+  "dist/*.zip",
+  "build/output/*.jar"
+]
+```
+
+---
 
 ## 🔑 GitHub Authentication
 

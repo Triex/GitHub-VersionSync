@@ -407,6 +407,51 @@ function getWorkspaceConfig<T>(section: string, defaultValue: T): T {
     return vscode.workspace.getConfiguration(EXTENSION_NAME).get(section, defaultValue);
 }
 
+// Add this helper function to get the latest version of each file type
+function getLatestVersionFiles(files: vscode.Uri[]): vscode.Uri[] {
+    // Group files by their base name (without version)
+    const fileGroups: Record<string, vscode.Uri[]> = {};
+    
+    for (const file of files) {
+        const filename = path.basename(file.fsPath);
+        // Extract the base name (everything before the last version-like pattern)
+        // This regex matches patterns like name-1.2.3.ext or name_v1.2.3.ext
+        const baseNameMatch = filename.match(/^(.*?)[-_]v?(\d+\.\d+\.\d+|\d+\.\d+|\d+)/i);
+        
+        const baseName = baseNameMatch ? baseNameMatch[1] : filename;
+        
+        if (!fileGroups[baseName]) {
+            fileGroups[baseName] = [];
+        }
+        fileGroups[baseName].push(file);
+    }
+    
+    // For each group, sort by modification time and get the most recent
+    const latestFiles: vscode.Uri[] = [];
+    for (const baseName in fileGroups) {
+        if (fileGroups[baseName].length === 1) {
+            // Only one file of this type, just include it
+            latestFiles.push(fileGroups[baseName][0]);
+        } else {
+            // Multiple files, get stats for each and sort by modification time
+            const sortedFiles = fileGroups[baseName].sort((a, b) => {
+                try {
+                    const statsA = fs.statSync(a.fsPath);
+                    const statsB = fs.statSync(b.fsPath);
+                    return statsB.mtime.getTime() - statsA.mtime.getTime(); // Descending order (newest first)
+                } catch (e) {
+                    return 0; // If we can't get stats, don't change order
+                }
+            });
+            
+            // Add the newest file (first after sorting)
+            latestFiles.push(sortedFiles[0]);
+        }
+    }
+    
+    return latestFiles;
+}
+
 async function createGitHubRelease(version: string, message: string = '', title?: string) {
     // Prevent recursive releases
     if (isCreatingRelease) {
@@ -522,7 +567,10 @@ async function createGitHubRelease(version: string, message: string = '', title?
                 const files = await vscode.workspace.findFiles(
                     new vscode.RelativePattern(workspaceRoot, pattern)
                 );
-                assets.push(...files.map(f => f.fsPath));
+                
+                // Filter to only include the latest version of each file type
+                const latestFiles = getLatestVersionFiles(files);
+                assets.push(...latestFiles.map(f => f.fsPath));
             }
         }
 
