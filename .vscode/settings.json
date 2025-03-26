@@ -1,10 +1,9 @@
 {
-  "github-versionsync.preReleaseCommands": [
-    "echo 'Building GitHub Version Sync extension...'",
-    "bun run build"
-  ],
   "github-versionsync.includePackageFiles": [
     "*.vsix"
   ],
-  "github-versionsync.enableGitHubRelease": false
+  "github-versionsync.enableGitHubRelease": false,
+  "github-versionsync.preReleaseCommands": [
+    "npm run compile && npx @vscode/vsce package"
+  ]
 }

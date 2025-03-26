@@ -597,86 +597,321 @@ function getLatestVersionFiles(files: vscode.Uri[]): vscode.Uri[] {
 }
 
 async function createGitHubRelease(version: string, message: string = '', title?: string, forceEnabled: boolean = false) {
-    console.log(`createGitHubRelease called for version ${version}, forceEnabled: ${forceEnabled}`);
+    console.log(`createGitHubRelease called for version ${version}`, { forceEnabled });
     
+    // Prevent recursive releases
+    if (isCreatingRelease) {
+        console.log('Release creation already in progress, skipping to prevent recursion');
+        return;
+    }
+    
+    isCreatingRelease = true;
     try {
-        // Only check for release enabled if we're not forcing it
+        // Check if we should proceed with the release
         if (!forceEnabled) {
-            // ALWAYS check the current setting directly from configuration to ensure accuracy
+            // Only check settings if this is an automatic release (not forced)
             const releaseEnabled = getGitHubReleaseEnabled();
-            console.log(`Release enabled: ${releaseEnabled}`);
+            console.log(`Auto-release enabled setting: ${releaseEnabled}`);
             
             if (!releaseEnabled) {
                 console.log('Automatic GitHub releases are disabled, skipping release creation');
+                isCreatingRelease = false; // Reset flag before returning
                 return;
             }
         } else {
-            console.log('Forcing release creation regardless of settings (user-initiated)');
+            console.log('Forcing release creation (user-initiated manual release)');
+            // Continue with release creation regardless of the automatic setting
         }
         
-        console.log(`Creating GitHub release for version ${version}`);
+        // Use workspace-specific settings with user settings as fallback
+        const prefix = githubApi.getWorkspaceConfig('releasePrefix', 'v');
         
-        // Prevent recursive releases
-        if (isCreatingRelease) {
-            console.log('Release creation already in progress, skipping to prevent recursion');
-            return;
-        }
-        
-        isCreatingRelease = true;
-        try {
-            // Show information message to indicate the release creation has started
-            vscode.window.showInformationMessage(`Creating GitHub release for v${version}...`);
+        // Show information message to indicate the release creation has started
+        vscode.window.showInformationMessage(`Creating GitHub release for ${prefix}${version}...`);
 
-            // NOTE: All this commented out code is now handled by the githubApi class
-            // The githubApi.createRelease method handles:
-            // 1. Running pre-release commands
-            // 2. GitHub authentication  
-            // 3. Creating the release with proper tag
-            // 4. Uploading assets
-            
-            // Find release assets
-            if (!extensionState || !extensionState.isInitialized) {
-                throw new Error('Extension state not initialized');
-            }
-            
-            const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
-            const assets: string[] = [];
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-            
-            if (workspaceRoot) {
-                for (const pattern of includePatterns) {
-                    const files = await vscode.workspace.findFiles(
-                        new vscode.RelativePattern(workspaceRoot, pattern)
-                    );
-                    
-                    // Filter to only include the latest version of each file type
-                    const latestFiles = getLatestVersionFiles(files);
-                    assets.push(...latestFiles.map(f => f.fsPath));
+        // CLEANUP: Delete any existing assets before building to ensure we only find fresh files
+        await cleanupExistingAssets();
+        
+        // Create the Git tag locally first
+        await createGitTag(version);
+        
+        // Track the build time for file freshness checking
+        const buildStartTime = new Date();
+        buildStartTime.setSeconds(buildStartTime.getSeconds() - 30); // Allow 30 sec buffer
+        
+        // Run pre-release commands directly here instead of letting githubApi do it
+        const preReleaseCommands = githubApi.getWorkspaceConfig<string[]>('preReleaseCommands', []);
+        if (preReleaseCommands.length > 0) {
+            try {
+                const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+                if (!workspaceRoot) {
+                    throw new Error('No workspace folder found');
                 }
+
+                // Default build commands if none are specified
+                let effectiveCommands = preReleaseCommands;
+                if (effectiveCommands.length === 0) {
+                    console.log('No pre-release commands specified, using default npm build commands');
+                    effectiveCommands = ['npm run build'];
+                }
+                
+                console.log(`Will run ${effectiveCommands.length} pre-release commands in workspace: ${workspaceRoot}`);
+                
+                // Use VS Code's Terminal API instead of direct cp.exec
+                const terminal = vscode.window.createTerminal({
+                    name: `Version Sync Pre-release`,
+                    cwd: workspaceRoot,
+                    // Make sure we're using a proper shell
+                    shellPath: process.platform === 'win32' ? 'powershell.exe' : (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+                });
+                
+                terminal.show(true); // Force focus on the terminal
+                
+                // Run all commands sequentially with proper error handling
+                try {
+                    // Output a clear header in the terminal
+                    terminal.sendText('echo "\\033[1;36m===== Running Pre-Release Commands for Version ' + version + ' =====\\033[0m"');
+                    terminal.sendText('echo ""');
+                    
+                    // Send Ctrl+C to terminal to clear any stuck processes
+                    terminal.sendText("\u0003", false);
+                    
+                    // Wait a moment for the Ctrl+C to take effect
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // Create a progress indicator while commands are running
+                    await vscode.window.withProgress({
+                        location: vscode.ProgressLocation.Notification,
+                        title: `Running pre-release commands`,
+                        cancellable: false
+                    }, async (progress) => {
+                        // Run each command one by one
+                        for (let i = 0; i < effectiveCommands.length; i++) {
+                            const cmd = effectiveCommands[i];
+                            progress.report({ 
+                                message: `Command ${i + 1}/${effectiveCommands.length}: ${cmd.length > 30 ? cmd.substring(0, 30) + '...' : cmd}`,
+                                increment: (100 / effectiveCommands.length) 
+                            });
+                            
+                            // Add command header to terminal for visibility
+                            terminal.sendText(`echo '> ${cmd}'`);
+                            
+                            // Add a small delay before sending the actual command
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // Create a unique file to track command completion
+                            const completionFlag = path.join(workspaceRoot, `.command_complete_${Math.random().toString(36).substring(2, 10)}`);
+                            
+                            // Execute the command and add a command to create the flag file upon completion
+                            terminal.sendText(`cd "${workspaceRoot}" && ${cmd} && touch "${completionFlag}" || touch "${completionFlag}"`);
+                            
+                            // Wait for the flag file to appear, which indicates command completion
+                            await new Promise<void>((resolve) => {
+                                // Set a fallback timeout in case file watching fails
+                                const fallbackTimeout = setTimeout(() => {
+                                    console.log(`Command timed out after fallback timeout: ${cmd}`);
+                                    resolve();
+                                }, 120000); // 2 minute fallback timeout
+                                
+                                // Check for the file every second
+                                const checkInterval = setInterval(() => {
+                                    if (fs.existsSync(completionFlag)) {
+                                        clearInterval(checkInterval);
+                                        clearTimeout(fallbackTimeout);
+                                        
+                                        // Clean up the flag file
+                                        try {
+                                            fs.unlinkSync(completionFlag);
+                                        } catch (e) {
+                                            console.error(`Failed to clean up completion flag file: ${e}`);
+                                        }
+                                        
+                                        resolve();
+                                    }
+                                }, 1000);
+                            });
+                            
+                            // Output a completion marker after each command with exit code
+                            terminal.sendText(`echo "Command completed with exit code: $?"`);
+                            
+                            // Add a separator between commands
+                            terminal.sendText('echo ""');
+                        }
+                        
+                        // All commands completed - show success message
+                        terminal.sendText(`echo '===== All commands completed ====='`);
+                    });
+                    
+                    // Keep terminal open for a while after completion
+                    setTimeout(() => {
+                        try {
+                            terminal.dispose();
+                        } catch (e) {
+                            // Ignore errors if terminal is already closed
+                        }
+                    }, 20000);
+                    
+                } catch (error: any) {
+                    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+                    vscode.window.showErrorMessage(`Pre-release command failed: ${errorMessage}`);
+                    return;
+                }
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+                vscode.window.showErrorMessage(`Pre-release command failed: ${errorMessage}`);
+                return;
             }
+        }
+        
+        // Find release assets
+        const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
+        const assets: string[] = [];
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+        
+        if (workspaceRoot) {
+            for (const pattern of includePatterns) {
+                const files = await vscode.workspace.findFiles(
+                    new vscode.RelativePattern(workspaceRoot, pattern)
+                );
+                
+                console.log(`Found ${files.length} total files matching pattern ${pattern}`);
+                
+                // Only include files that were created/modified after our build
+                const recentFiles = [];
+                for (const file of files) {
+                    try {
+                        const stats = fs.statSync(file.fsPath);
+                        if (stats.mtime > buildStartTime) {
+                            console.log(`Including fresh file: ${file.fsPath}, modified at ${stats.mtime}`);
+                            recentFiles.push(file);
+                        } else {
+                            console.log(`Skipping old file: ${file.fsPath}, modified at ${stats.mtime}`);
+                        }
+                    } catch (err) {
+                        console.error(`Error checking file stats: ${err}`);
+                    }
+                }
+                
+                console.log(`Found ${recentFiles.length} fresh files out of ${files.length} total`);
+                assets.push(...recentFiles.map(f => f.fsPath));
+            }
+        }
 
-            console.log(`Found ${assets.length} assets to include in release:`, assets);
-
-            // Call the GitHub API to handle the release creation
-            const success = await githubApi.createRelease(version, message, title, assets);
+        console.log(`Found ${assets.length} assets to include in release:`, assets);
+        
+        // Condition for showing the 'no assets' dialog - files are required, but none were found
+        // Skip this check if the includePatterns array is empty (user doesn't want assets)
+        if (includePatterns.length > 0 && assets.length === 0) {
+            const buttons = ['Continue Anyway', 'Open Settings', 'Cancel'];
+            const response = await vscode.window.showWarningMessage(
+                'No assets found for release. Your build commands may not have created any files, ' +
+                'or the includePackageFiles pattern may not match your assets.',
+                ...buttons
+            );
+            
+            if (response === 'Open Settings') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'github-versionsync.includePackageFiles');
+                isCreatingRelease = false; // Reset flag before returning
+                return;
+            } else if (response === 'Cancel' || !response) {
+                isCreatingRelease = false; // Reset flag before returning
+                return;
+            }
+            // Continue if user chose 'Continue Anyway'
+        }
+        
+        try {
+            // Call the GitHub API to create the release, but specify skipPreReleaseCommands=true to avoid running commands twice
+            const success = await githubApi.createRelease(version, message, title, assets, true);
             
             if (!success) {
-                throw new Error('GitHub API reported failure creating release');
+                console.error('GitHub API reported failure creating release');
+                vscode.window.showErrorMessage('Failed to create GitHub release: API reported failure');
+                isCreatingRelease = false; // Make sure the flag is reset
+                return false; // Return false to indicate failure to the caller
             }
             
             console.log(`Successfully created GitHub release for v${version}`);
             vscode.window.showInformationMessage(`Successfully created GitHub release for v${version}`);
+            return true; // Return true to indicate success to the caller
         } catch (error: any) {
             console.error('Error creating GitHub release:', error);
+            
+            // Special handling for tag_name already exists errors
+            if (error.message && error.message.includes('already_exists') && error.message.includes('tag_name')) {
+                const prefix = githubApi.getWorkspaceConfig('releasePrefix', 'v');
+                const tagName = `${prefix}${version}`;
+                
+                const buttons = ['Delete Existing Tag', 'Continue Editing', 'Cancel'];
+                const response = await vscode.window.showErrorMessage(
+                    `Tag "${tagName}" already exists on GitHub. You need to use a different version or delete the existing tag.`,
+                    ...buttons
+                );
+                
+                if (response === 'Delete Existing Tag') {
+                    try {
+                        const octokit = await githubApi.getOctokit();
+                        const repoUrl = await githubApi.getRepoUrl();
+                        const [owner, repo] = repoUrl.split('/').slice(-2);
+                        
+                        // Find the release by tag name
+                        const releases = await octokit.rest.repos.listReleases({
+                            owner,
+                            repo
+                        });
+                        
+                        const existingRelease = releases.data.find(r => r.tag_name === tagName);
+                        
+                        if (existingRelease) {
+                            // Delete the release
+                            await octokit.rest.repos.deleteRelease({
+                                owner,
+                                repo,
+                                release_id: existingRelease.id
+                            });
+                            
+                            // Delete the tag
+                            await octokit.rest.git.deleteRef({
+                                owner,
+                                repo,
+                                ref: `tags/${tagName}`
+                            });
+                            
+                            vscode.window.showInformationMessage(
+                                `Successfully deleted tag "${tagName}". You can now create a new release with this version.`
+                            );
+                        } else {
+                            vscode.window.showWarningMessage(`Couldn't find a release with tag "${tagName}".`);
+                        }
+                    } catch (deleteError: any) {
+                        console.error('Error deleting tag:', deleteError);
+                        vscode.window.showErrorMessage(
+                            `Failed to delete existing tag: ${deleteError.message || 'Unknown error'}`
+                        );
+                    }
+                }
+                
+                // Only close if user selected 'Cancel'
+                if (response === 'Cancel') {
+                    return false;
+                }
+                
+                // For 'Continue Editing' or tag deletion, we want to keep the webview open
+                return false; // Return false to indicate failure to the caller
+            }
+            
+            // Handle other errors
             const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
             vscode.window.showErrorMessage(`Failed to create GitHub release: ${errorMessage}`);
-            throw error; // Re-throw to allow handling in the calling function
-        } finally {
-            isCreatingRelease = false;  // Reset the flag when done, even if there was an error
+            isCreatingRelease = false; // Make sure the flag is reset
+            return false; // Return false to indicate failure to the caller
         }
     } catch (error: any) {
         console.error('Error creating GitHub release:', error);
         vscode.window.showErrorMessage(`Failed to create GitHub release: ${error}`);
+        return false; // Return false to indicate failure to the caller
+    } finally {
+        isCreatingRelease = false;  // Reset the flag when done, even if there was an error
     }
 }
 
@@ -718,9 +953,10 @@ class ReleaseWebviewProvider {
         const commitHistory = await this.getCommitHistory();
         
         if (this._view) {
-            // Don't do any escaping here - just pass the raw content to the webview
-            // The HTML templating will handle it properly
-            this._view.webview.html = this.getWebviewContent(currentVersion, commitHistory);
+            // Properly escape any quotes or special characters for JavaScript safety
+            const escapedCommitHistory = commitHistory.replace(/"/g, '\\"').replace(/\\/g, '\\\\');
+            
+            this._view.webview.html = this.getWebviewContent(currentVersion, escapedCommitHistory);
 
             this._view.webview.onDidReceiveMessage(
                 async (message) => {
@@ -838,33 +1074,16 @@ class ReleaseWebviewProvider {
                 const vscode = acquireVsCodeApi();
                 
                 document.getElementById('create').addEventListener('click', () => {
-                    try {
-                        const version = document.getElementById('version').value;
-                        const notes = document.getElementById('notes').value || '';
-                        const title = document.getElementById('title').value || '';
-                        
-                        console.log('Sending createRelease message from webview with:', {
-                            version,
-                            notesLength: notes ? notes.length : 0,
-                            hasTitle: !!title
-                        });
-                        
-                        // First make sure version is defined
-                        if (!version) {
-                            console.error('Version is empty or undefined');
-                            alert('Cannot create release: Version is missing');
-                            return;
-                        }
-                        
-                        vscode.postMessage({
-                            command: 'createRelease',
-                            version: version,
-                            notes: notes,
-                            title: title.length > 0 ? title : undefined
-                        });
-                    } catch (error) {
-                        console.error('Error in create button handler:', error);
-                    }
+                    const version = document.getElementById('version').value;
+                    const notes = document.getElementById('notes').value;
+                    const title = document.getElementById('title').value || undefined;
+                    
+                    vscode.postMessage({
+                        command: 'createRelease',
+                        version,
+                        notes,
+                        title
+                    });
                 });
                 
                 document.getElementById('cancel').addEventListener('click', () => {
@@ -912,11 +1131,9 @@ class ReleaseWebviewProvider {
                 // Handle messages from the extension
                 window.addEventListener('message', event => {
                     const message = event.data;
-                    console.log('Received message from extension:', message.command);
                     
                     if (message.command === 'updateChangelog') {
-                        // Safely update the text area with the new changelog
-                        document.getElementById('notes').value = message.changelog || '';
+                        document.getElementById('notes').value = message.changelog;
                     }
                 });
             </script>
@@ -931,64 +1148,30 @@ class ReleaseWebviewProvider {
     private _onDidReceiveMessage(message: any) {
         switch (message.command) {
             case 'createRelease':
-                console.log('Received createRelease command from webview:', {
-                    version: message.version,
-                    title: message.title ? message.title.substring(0, 30) + '...' : 'none',
-                    hasNotes: !!message.notes
-                });
-                
                 vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
                     title: "Creating GitHub Release",
                     cancellable: false
                 }, async () => {
                     try {
-                        // Check extension state
-                        if (!extensionState || !extensionState.isInitialized) {
-                            throw new Error('Extension state not initialized');
+                        console.log('Creating GitHub release with:', {
+                            version: message.version,
+                            title: message.title,
+                            notesLength: message.notes ? message.notes.length : 0
+                        });
+                        
+                        // IMPORTANT: Call createGitHubRelease with forceEnabled=true since this is a user-initiated action
+                        // Only close the webview after successful release creation
+                        const success = await createGitHubRelease(message.version, message.notes, message.title, true);
+                        
+                        if (success) {
+                            // Only dispose the view if we reach this point (no errors were thrown)
+                            this._view?.dispose();
                         }
-                        
-                        // Get the GitHub API
-                        if (!githubApi) {
-                            throw new Error('GitHub API not initialized');
-                        }
-                        
-                        // Find release assets
-                        const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
-                        const assets: string[] = [];
-                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-                        
-                        if (workspaceRoot) {
-                            for (const pattern of includePatterns) {
-                                const files = await vscode.workspace.findFiles(
-                                    new vscode.RelativePattern(workspaceRoot, pattern)
-                                );
-                                
-                                // Filter to only include the latest version of each file type
-                                const latestFiles = getLatestVersionFiles(files);
-                                assets.push(...latestFiles.map(f => f.fsPath));
-                            }
-                        }
-                        
-                        console.log(`Found ${assets.length} assets to include in release:`, assets);
-                        
-                        // Call the GitHub API directly
-                        const success = await githubApi.createRelease(
-                            message.version,
-                            message.notes || '', 
-                            message.title, 
-                            assets
-                        );
-                        
-                        if (!success) {
-                            throw new Error('GitHub API reported failure creating release');
-                        }
-                        
-                        // Close the webview
-                        this._view?.dispose();
                     } catch (error: any) {
                         console.error('Failed to create release:', error);
-                        vscode.window.showErrorMessage(`Failed to create release: ${error.message}`);
+                        vscode.window.showErrorMessage(`Failed to create release: ${error.message || error}`);
+                        // Don't close the webview on error so user can try again
                     }
                 });
                 break;
@@ -1095,9 +1278,10 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 
                 if (gitStatus.trim() !== '') {
                     // There are changes, stash them first
-                    console.log('Found uncommitted changes to package.json, stashing first');
+                    console.log('Found uncommitted changes to package.json, stashing before version update');
                     
                     try {
+                        // Stash only the package.json changes
                         await execAsync('git stash push -m "Stashed by GitHub-Version-Sync extension" package.json', { cwd: workspaceFolders[0].uri.fsPath });
                         stashCreated = true;
                         console.log('Successfully stashed changes to package.json');
@@ -1165,8 +1349,11 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                     await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
                     console.log('Successfully restored stashed changes');
                 } catch (popError: any) {
-                    console.error('Failed to pop stashed changes:', popError);
-                    vscode.window.showErrorMessage(`Failed to restore your stashed changes: ${popError.message}. You may need to manually run 'git stash pop'.`);
+                    console.error('Failed to restore stashed changes - may need manual intervention:', popError);
+                    vscode.window.showWarningMessage(
+                        'Version update succeeded, but there were conflicts restoring other package.json changes. ' +
+                        'You may need to resolve these manually with `git stash pop`.'
+                    );
                 }
             }
         }
@@ -1205,6 +1392,113 @@ function createErrorTreeItem(label: string, description?: string): vscode.TreeIt
         item.tooltip = description;
     }
     return item;
+}
+
+/**
+ * Creates a Git tag for the given version and optionally pushes it
+ * @param version The version to tag
+ */
+async function createGitTag(version: string): Promise<void> {
+    console.log(`Creating Git tag for version ${version}`);
+    
+    try {
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+        if (!workspaceRoot) {
+            throw new Error('No workspace folder found');
+        }
+        
+        // Get the Git extension
+        const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+        if (!gitExtension) {
+            console.log('Git extension not found, skipping tag creation');
+            return;
+        }
+        
+        const gitApi = gitExtension.getAPI(1);
+        if (!gitApi) {
+            throw new Error('Failed to get Git API');
+        }
+        
+        // Find the repository for the current workspace
+        const repository = gitApi.repositories.find((repo: any) => 
+            repo.rootUri.fsPath === workspaceRoot
+        );
+        
+        if (!repository) {
+            throw new Error('No Git repository found in the current workspace');
+        }
+        
+        // Get tag prefix from settings
+        const prefix = githubApi.getWorkspaceConfig('releasePrefix', 'v');
+        const tagName = `${prefix}${version}`;
+        
+        // Create the tag
+        const createTagResult = await execAsync(`git tag -a ${tagName} -m "Release ${tagName}"`, { 
+            cwd: workspaceRoot 
+        });
+        console.log(`Created Git tag ${tagName}`);
+        
+        // Check if we should push the tag
+        const shouldPushTag = githubApi.getWorkspaceConfig('pushTagsOnRelease', false);
+        if (shouldPushTag) {
+            console.log('Pushing tag to remote...');
+            const pushTagResult = await execAsync(`git push origin ${tagName}`, { 
+                cwd: workspaceRoot 
+            });
+            console.log(`Pushed tag ${tagName} to remote`);
+        } else {
+            console.log('Tag push is disabled in settings, skipping push');
+        }
+        
+    } catch (error: any) {
+        console.error('Error creating Git tag:', error);
+        vscode.window.showErrorMessage(`Failed to create Git tag: ${error.message}`);
+        // Don't throw - we still want to create the release even if tagging fails
+    }
+}
+
+/**
+ * Cleans up any existing asset files before building
+ */
+async function cleanupExistingAssets(): Promise<void> {
+    console.log('Cleaning up existing asset files before building...');
+    
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
+    if (!workspaceRoot) {
+        console.log('No workspace folder found, skipping cleanup');
+        return;
+    }
+    
+    const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
+    
+    // Show progress during cleanup
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Cleaning up existing assets",
+        cancellable: false
+    }, async () => {
+        for (const pattern of includePatterns) {
+            const files = await vscode.workspace.findFiles(
+                new vscode.RelativePattern(workspaceRoot, pattern)
+            );
+            
+            console.log(`Found ${files.length} existing files matching pattern ${pattern} to clean up`);
+            
+            for (const file of files) {
+                try {
+                    fs.unlinkSync(file.fsPath);
+                    console.log(`Deleted existing file: ${file.fsPath}`);
+                } catch (err) {
+                    console.error(`Error deleting file ${file.fsPath}:`, err);
+                }
+            }
+        }
+        
+        // Small delay to ensure file system updates
+        await new Promise(r => setTimeout(r, 1000));
+    });
+    
+    console.log('Asset cleanup completed');
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -1367,7 +1661,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
                     // Store the current package.json content
                     const packageJsonPath = path.join(workspaceFolder.uri.fsPath, 'package.json');
-                    const originalContent = fs.readFileSync(packageJsonPath, 'utf-8');
+                    const originalContent = fs.readFileSync(packageJsonPath, 'utf8');
                     const packageJson = JSON.parse(originalContent);
                     // Store the original version before any changes
                     const oldVersion = packageJson.version;
@@ -1563,7 +1857,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     const packageJson = require(packageJsonPath);
                     console.log('Found package.json version:', packageJson.version);
                 } catch (error: any) {
-                    console.log('Error reading package.json:', error.message);
+                    console.log('Error reading package.json:', error.message || 'Unknown error');
                 }
             }
         }
@@ -1917,7 +2211,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (stagedChanges.hasVersionChanges && stagedChanges.stagedVersion) {
                     const proceed = await vscode.window.showInformationMessage(
                         `Detected version change already staged: ${stagedChanges.stagedVersion}. Proceed with this version?`,
-                        { modal: true },
+                        { modal: true },  // This makes it truly modal and blocking
                         'Yes', 'No (Use Extension Version)'
                     );
                     

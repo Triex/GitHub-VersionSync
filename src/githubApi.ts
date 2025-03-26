@@ -132,13 +132,15 @@ export class GitHubApi {
      * @param message Release message/description
      * @param title Optional release title
      * @param assets Optional asset files to include
+     * @param skipPreReleaseCommands Optional flag to skip running pre-release commands
      * @returns Promise resolving to true if successful
      */
     public async createRelease(
         version: string, 
         message: string = '', 
         title?: string, 
-        assets: string[] = []
+        assets: string[] = [],
+        skipPreReleaseCommands: boolean = false
     ): Promise<boolean> {
         // Prevent recursive releases
         if (this.isCreatingRelease) {
@@ -153,14 +155,15 @@ export class GitHubApi {
                 version,
                 title,
                 messageLength: message ? message.length : 0,
-                assets: assets.length
+                assets: assets.length,
+                skipPreReleaseCommands
             });
             
             // Use workspace-specific settings with user settings as fallback
             const prefix = this.getWorkspaceConfig('releasePrefix', 'v');
             
-            // Run pre-release commands if specified
-            if (!await this.runPreReleaseCommands()) {
+            // Run pre-release commands if specified and not skipped
+            if (!skipPreReleaseCommands && !await this.runPreReleaseCommands()) {
                 return false;
             }
             

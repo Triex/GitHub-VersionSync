@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -20,9 +20,8 @@
     "node": ">=18.0.0"
   },
   "categories": [
-    "Source Control",
-    "Other",
-    "SCM Providers"
+    "SCM Providers",
+    "Other"
   ],
   "keywords": [
     "version",
@@ -79,7 +78,7 @@
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
     "build": "node -e \"try { require('child_process').execSync('bun -v', {stdio: 'ignore'}); require('child_process').execSync('bun run build:bun', {stdio: 'inherit'}); } catch(e) { require('child_process').execSync('npm run build:npm', {stdio: 'inherit'}); }\"",
-    "build:bun": "tsc -p ./ && vsce package",
+    "build:bun": "tsc -p ./ && npx @vscode/vsce package",
     "build:npm": "tsc -p ./ && npx @vscode/vsce package",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
@@ -89,10 +88,11 @@
     "octokit": "^3.1.2"
   },
   "devDependencies": {
+    "@types/glob": "^8.1.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.94.0",
-    "typescript": "^5.0.0",
-    "@vscode/vsce": "^2.24.0"
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.0.0"
   },
   "activationEvents": [
     "onStartupFinished"
