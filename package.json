@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
