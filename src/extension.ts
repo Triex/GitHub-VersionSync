@@ -526,7 +526,10 @@ class ReleaseWebviewProvider {
             vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                retainContextWhenHidden: true
+                retainContextWhenHidden: true,
+                localResourceRoots: [
+                    vscode.Uri.joinPath(this._extensionUri, 'images')
+                ]
             }
         );
 
@@ -582,6 +585,10 @@ class ReleaseWebviewProvider {
         const showDate = config.get('changelogShowDate', false);
         const showAuthor = config.get('changelogShowAuthor', false);
         
+        // Generate URIs for images
+        const logoPath = vscode.Uri.joinPath(this._extensionUri, 'images', 'icon.png');
+        const logoUri = this._view?.webview.asWebviewUri(logoPath);
+        
         return `<!DOCTYPE html>
         <html lang="en">
         <head>
@@ -594,6 +601,16 @@ class ReleaseWebviewProvider {
                     color: var(--vscode-editor-foreground);
                     font-family: var(--vscode-font-family);
                     background-color: var(--vscode-editor-background);
+                }
+                .header {
+                    display: flex;
+                    align-items: center;
+                    margin-bottom: 20px;
+                }
+                .logo {
+                    width: 32px;
+                    height: 32px;
+                    margin-right: 10px;
                 }
                 .form-group {
                     margin-bottom: 15px;
@@ -666,6 +683,10 @@ class ReleaseWebviewProvider {
             </style>
         </head>
         <body>
+            <div class="header">
+                <img class="logo" src="${logoUri}" alt="Logo">
+                <h1>${defaultTitle}</h1>
+            </div>
             <form id="releaseForm">
                 <div class="form-group">
                     <label for="title">Release Title</label>
