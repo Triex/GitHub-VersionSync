@@ -1,12 +1,13 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
-import { Octokit } from 'octokit';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChangelogGenerator, EXTENSION_NAME } from './changelog';
 import { extensionState } from './extensionState';
+import { githubApi } from './githubApi';
 
 const EXTENSION_NAME_OLD = 'github-versionsync';
+const GITHUB_RELEASE_KEY = 'enableGitHubRelease';
 let enableGitHubRelease = false;
 let enableAutoTag = true;
 type VersionType = 'major' | 'minor' | 'patch' | 'custom' | 'none';
@@ -79,6 +80,71 @@ function updateVersionStatusBar() {
     extensionState.versionStatusBarItem.text = `$(versions) ${modeEmojis[currentVersionMode]} ${currentVersionMode}`;
     extensionState.versionStatusBarItem.tooltip = `Version Mode: ${currentVersionMode}\nClick to change`;
     extensionState.versionStatusBarItem.show();
+}
+
+// Helper function to get the current GitHub release setting
+function getGitHubReleaseEnabled(): boolean {
+    // Get all configuration levels
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    
+    // Check if we have a workspace-specific override
+    const workspaceValue = config.inspect(GITHUB_RELEASE_KEY)?.workspaceValue;
+    const workspaceFolderValue = config.inspect(GITHUB_RELEASE_KEY)?.workspaceFolderValue;
+    const globalValue = config.inspect(GITHUB_RELEASE_KEY)?.globalValue;
+    
+    console.log(`GitHub release setting values - Workspace: ${workspaceValue}, WorkspaceFolder: ${workspaceFolderValue}, Global: ${globalValue}`);
+    
+    // Workspace folder has highest precedence, then workspace, then global
+    if (workspaceFolderValue !== undefined) {
+        return !!workspaceFolderValue;
+    }
+    
+    if (workspaceValue !== undefined) {
+        return !!workspaceValue;
+    }
+    
+    // Fall back to global, or default false if not set
+    return !!globalValue;
+}
+
+// Helper function to set the GitHub release setting
+async function setGitHubReleaseEnabled(value: boolean): Promise<void> {
+    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+    const inspection = config.inspect(GITHUB_RELEASE_KEY);
+    
+    console.log('SETTINGS INSPECTION:', JSON.stringify(inspection, null, 2));
+    
+    // First, clear the setting at all scopes to avoid conflicts
+    // We'll remove workspace and workspace folder settings completely
+    try {
+        // Clear workspace folder level setting (if it exists)
+        if (inspection?.workspaceFolderValue !== undefined) {
+            console.log('Clearing workspace folder level setting');
+            await config.update(GITHUB_RELEASE_KEY, undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+        }
+        
+        // Clear workspace level setting (if it exists)
+        if (inspection?.workspaceValue !== undefined) {
+            console.log('Clearing workspace level setting');
+            await config.update(GITHUB_RELEASE_KEY, undefined, vscode.ConfigurationTarget.Workspace);
+        }
+        
+        // Now set at global level only
+        console.log(`Setting global value to ${value}`);
+        await config.update(GITHUB_RELEASE_KEY, value, vscode.ConfigurationTarget.Global);
+        
+        // Update the global variable to match
+        enableGitHubRelease = value;
+        
+        // Verify the setting was applied correctly
+        const newConfig = vscode.workspace.getConfiguration(EXTENSION_NAME);
+        const newEnabled = getGitHubReleaseEnabled();
+        console.log(`After update, getGitHubReleaseEnabled() returns: ${newEnabled}`);
+        console.log('NEW SETTINGS INSPECTION:', JSON.stringify(newConfig.inspect(GITHUB_RELEASE_KEY), null, 2));
+    } catch (error) {
+        console.error('Error updating settings:', error);
+        throw error;
+    }
 }
 
 class VersionQuickPickItem implements vscode.QuickPickItem {
@@ -195,42 +261,79 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 }
                 
                 try {
-                    // Read the current package.json
+                    // Now read the current package.json without other pending changes
                     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
                     
-                    // Only update if the version is actually different
-                    if (packageJson.version !== version) {
-                        // Store old version for comparison
-                        const oldVersion = packageJson.version;
+                    // Update only the version
+                    packageJson.version = version;
+                    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+                    console.log(`Updated package.json with only version change to ${version}`);
+                    
+                    // Stage only the package.json file
+                    await execAsync(`git add "${packageJsonPath}"`, { cwd: workspaceFolder.uri.fsPath });
+                    console.log(`Staged ${packageJsonPath} with version change only`);
+                    
+                    // Show what's staged
+                    const diffCachedCmd = 'git diff --cached';
+                    const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolder.uri.fsPath });
+                    console.log('Staged changes:', stagedChanges);
+                    
+                    // Get the current commit message
+                    const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolder.uri.fsPath });
+                    const trimmedMsg = commitMsg.trim();
+                    
+                    // Create updated commit message with version info if not already present
+                    let newMessage = trimmedMsg;
+                    if (!newMessage.includes(`v${version}`)) {
+                        // Split the commit message into lines to modify only the first line
+                        const messageLines = newMessage.split('\n');
+                        const firstLine = messageLines[0];
                         
-                        // Update version in package.json
-                        packageJson.version = version;
-                        const updatedContent = JSON.stringify(packageJson, null, 2);
-                        fs.writeFileSync(packageJsonPath, updatedContent);
+                        // Format options for the first line only
+                        const firstLineFormats = {
+                            'arrow': `${firstLine} → v${version}`,
+                            'bump': `${firstLine} ⇧ v${version}`,
+                            'simple': `${firstLine} v${version}`,
+                            'release': `${firstLine} 📦 v${version}`,
+                            'brackets': `${firstLine} (v${version})`
+                        };
                         
-                        console.log(`Updated package.json with only version change from ${oldVersion} to ${version}`);
+                        // Apply the selected format to only the first line
+                        const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
+                        messageLines[0] = firstLineFormats[format] || firstLineFormats.simple;
                         
-                        // Reset the cached version to force recalculation
-                        this.lastCalculatedVersion = undefined;
-                        lastCalculatedVersion = undefined; // Reset global version cache too
-                        nextVersion = '';
-                        
-                        // Only set shouldUpdateVersion to true when we've actually updated the version
-                        shouldUpdateVersion = true;
-                        
-                        // Force a refresh of the UI after version update with a small delay
-                        setTimeout(() => {
-                            this.refresh();
-                            
-                            // Update UI components after refresh
-                            setTimeout(() => {
-                                updateVersionStatusBar();
-                            }, 100);
-                        }, 200);
-                        
-                        vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
-                    } else {
-                        console.log(`Version already set to ${version}, no update needed`);
+                        // Keep the rest of the commit message unchanged
+                        newMessage = messageLines.join('\n');
+                    }
+                    
+                    console.log('Amending commit with message:', newMessage);
+                    // Amend the commit with the updated message
+                    await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { 
+                        cwd: workspaceFolder.uri.fsPath 
+                    });
+                    
+                    // Reset the cached version to force recalculation
+                    this.lastCalculatedVersion = undefined;
+                    lastCalculatedVersion = undefined; // Reset global version cache too
+                    nextVersion = '';
+                    
+                    // Only set shouldUpdateVersion to true when we've actually updated the version
+                    shouldUpdateVersion = true;
+                    
+                    console.log('Updated version in package.json to:', version);
+                    vscode.window.showInformationMessage(`Version updated from ${packageJson.version} to ${version}`);
+                    
+                    // Create GitHub release if enabled
+                    const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+                    if (getGitHubReleaseEnabled()) {
+                        console.log(`GitHub releases are enabled, creating release for v${version}`);
+                        try {
+                            // Create the GitHub release with the commit message
+                            await createGitHubRelease(version, newMessage);
+                        } catch (releaseError: any) {
+                            console.error('Failed to create GitHub release:', releaseError);
+                            vscode.window.showErrorMessage(`Failed to create GitHub release: ${releaseError.message || releaseError}`);
+                        }
                     }
                 } finally {
                     // If we stashed changes, pop them back
@@ -252,6 +355,9 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 console.error('Error updating version:', error);
                 vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
             }
+        } catch (error: any) {
+            console.error('Error updating version:', error);
+            vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
         } finally {
             isUpdatingVersion = false;
         }
@@ -264,6 +370,13 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
         
         try {
             isRefreshing = true;
+            
+            // Force refresh of global enableGitHubRelease variable
+            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+            enableGitHubRelease = getGitHubReleaseEnabled();
+            console.log(`Tree refresh: GitHub releases setting refreshed to: ${enableGitHubRelease}`);
+            
+            // Trigger UI update
             this._onDidChangeTreeData.fire();
             
             // Update UI components after refresh
@@ -277,25 +390,41 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     }
 
     async getChildren(): Promise<vscode.TreeItem[]> {
-        // Always get the current version directly to ensure it's up-to-date
-        const currentVersion = this.getCurrentVersion();
-        
         try {
-            // Calculate next version if needed
-            if (!lastCalculatedVersion || nextVersion === '' || lastCalculatedVersion !== currentVersion) {
-                nextVersion = this.bumpVersion(currentVersion, currentVersionMode);
-                lastCalculatedVersion = currentVersion;
+            // Skip if the extension isn't in a healthy state
+            if (!extensionState.isHealthy) {
+                return [
+                    createErrorTreeItem('Extension is in an error state', 'Try reloading the window')
+                ];
             }
-    
-            // Reset shouldUpdateVersion flag after tree refresh
-            shouldUpdateVersion = false;
-    
-            const currentItem = new vscode.TreeItem(`Current: ${currentVersion}`);
-            currentItem.iconPath = new vscode.ThemeIcon('tag');
-            currentItem.contextValue = 'current';
             
-            // Enhanced version mode visibility in tree view
-            const modeIcons = {
+            // Get workspace folders
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) {
+                return [
+                    createErrorTreeItem('No workspace open', 'Open a workspace to use this extension')
+                ];
+            }
+            
+            // Create header items
+            const headerItem = new vscode.TreeItem('Version Control', vscode.TreeItemCollapsibleState.None);
+            headerItem.contextValue = 'header';
+            
+            // Create current version item
+            let currentItem: vscode.TreeItem;
+            
+            try {
+                // Always read the current version fresh
+                const version = await getCurrentVersion();
+                currentItem = new vscode.TreeItem(`Current: v${version}`, vscode.TreeItemCollapsibleState.None);
+                this.lastCalculatedVersion = version;
+            } catch (error: any) {
+                console.error('Error getting current version:', error);
+                currentItem = createErrorTreeItem('Failed to get version', error.message);
+            }
+            
+            // Create next version item
+            const modeIcons: Record<string, string> = {
                 'patch': 'bug',
                 'minor': 'package',
                 'major': 'versions',
@@ -303,7 +432,7 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 'custom': 'edit'
             };
             
-            const modeDescriptions = {
+            const modeDescriptions: Record<string, string> = {
                 'patch': '(bug fixes)',
                 'minor': '(new features)',
                 'major': '(breaking changes)',
@@ -322,9 +451,14 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
             };
             nextItem.contextValue = 'next';
     
+            // IMPORTANT: ALWAYS get the current configuration directly 
             const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-            const releaseEnabled = config.get('enableGitHubRelease', false);
+            
+            // Use our helper function to get the current GitHub release setting
+            const releaseEnabled = getGitHubReleaseEnabled();
             const releaseOn = config.get<string[]>('releaseOn', ['major', 'minor', 'patch']);
+            
+            console.log(`getChildren() - GitHub releases currently ${releaseEnabled ? 'enabled' : 'disabled'}`);
             
             // Create GitHub Release item
             const githubItem = new vscode.TreeItem('Create GitHub Release', vscode.TreeItemCollapsibleState.None);
@@ -334,17 +468,16 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
                 title: 'Create GitHub Release'
             };
     
-            // Create Auto-Release Settings item
-            const autoReleaseItem = new vscode.TreeItem('Auto-Release Settings', vscode.TreeItemCollapsibleState.None);
-            autoReleaseItem.command = {
-                command: 'github-versionsync.toggleGitHubRelease',
-                title: 'Toggle Automatic GitHub Releases'
-            };
-    
+            // Create Auto-Release Settings item with clear ON/OFF indicator
+            const autoReleaseItem = new vscode.TreeItem(
+                `Auto-Release: ${releaseEnabled ? 'ON' : 'OFF'}`, 
+                vscode.TreeItemCollapsibleState.None
+            );
+            
             // Check GitHub authentication status
             let token: any;
             try {
-                token = await getGitHubToken();
+                token = await githubApi.getGitHubToken();
             } catch (error) {
                 console.error('Failed to get GitHub token during tree view refresh:', error);
                 // Continue without the token - we'll handle this in the UI
@@ -357,15 +490,27 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
             } else {
                 githubItem.tooltip = 'Create a GitHub release for the current version';
                 if (releaseEnabled) {
+                    // Green icon when enabled
+                    autoReleaseItem.iconPath = new vscode.ThemeIcon('check', new vscode.ThemeColor('terminal.ansiGreen'));
                     autoReleaseItem.description = `Auto: ${releaseOn.join('/')}`;
                     autoReleaseItem.tooltip = `Automatic releases enabled for ${releaseOn.join('/')} versions`;
                 } else {
+                    // Red icon when disabled
+                    autoReleaseItem.iconPath = new vscode.ThemeIcon('x', new vscode.ThemeColor('terminal.ansiRed'));
                     autoReleaseItem.description = 'Auto: Off';
                     autoReleaseItem.tooltip = 'Automatic releases are disabled';
                 }
             }
+            
+            autoReleaseItem.command = {
+                command: 'github-versionsync.toggleGitHubRelease',
+                title: 'Toggle Automatic GitHub Releases'
+            };
     
-            return [currentItem, nextItem, githubItem, autoReleaseItem];
+            // Log what we're actually displaying
+            console.log(`Auto-release tree item created with state: ${releaseEnabled ? 'ON' : 'OFF'}`);
+    
+            return [headerItem, currentItem, nextItem, githubItem, autoReleaseItem];
         } catch (error) {
             console.error('Error in getChildren:', error);
             
@@ -394,80 +539,16 @@ class VersionProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
 }
 
 async function getGitHubToken(): Promise<string | undefined> {
-    try {
-        // Check if the extension is in a healthy state
-        if (!extensionState.isHealthy) {
-            console.log('Extension in unhealthy state, skipping GitHub auth');
-            return undefined;
-        }
-        
-        // Try to get the session without forcing creation
-        const session = await vscode.authentication.getSession('github', ['repo'], { 
-            createIfNone: false,
-            silent: true // Don't show any UI to avoid blocking
-        });
-        
-        if (session) {
-            // If we successfully get a token, reset our error state
-            extensionState.recover();
-            return session.accessToken;
-        } else {
-            console.log('No GitHub session available');
-            return undefined;
-        }
-    } catch (error: any) {
-        console.error('GitHub Authentication Error:', error);
-        
-        // Mark extension as unhealthy and recommend window reload
-        if (!extensionState.hasShownError) {
-            extensionState.showStateWarning('GitHub authentication failed. This may be due to an extension host issue');
-        }
-        
-        return undefined;
-    }
+    return githubApi.getGitHubToken();
 }
 
 async function getRepoUrl(): Promise<string> {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        throw new Error('No workspace opened');
-    }
-
-    // Get repository info from git config
-    const gitConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.git', 'config');
-    if (!fs.existsSync(gitConfigPath)) {
-        throw new Error('No git config found');
-    }
-
-    const gitConfig = fs.readFileSync(gitConfigPath, 'utf8');
-    const repoUrlMatch = gitConfig.match(/url = .*github\.com[:/](.+\/.+)\.git/);
-    
-    if (!repoUrlMatch) {
-        throw new Error('Could not find GitHub repository URL in git config');
-    }
-
-    return repoUrlMatch[1].replace(':', '/');
+    return githubApi.getRepoUrl();
 }
 
-// Add this helper function to get workspace-specific settings
+// Helper function to get workspace configuration using the githubApi component
 function getWorkspaceConfig<T>(section: string, defaultValue: T): T {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        return vscode.workspace.getConfiguration(EXTENSION_NAME).get(section, defaultValue);
-    }
-    
-    // Try to get workspace setting first
-    const workspaceValue = vscode.workspace.getConfiguration(
-        EXTENSION_NAME, workspaceFolder.uri
-    ).get<T>(section);
-    
-    // If workspace setting exists, return it
-    if (workspaceValue !== undefined) {
-        return workspaceValue;
-    }
-    
-    // Otherwise fall back to user setting
-    return vscode.workspace.getConfiguration(EXTENSION_NAME).get(section, defaultValue);
+    return githubApi.getWorkspaceConfig(section, defaultValue);
 }
 
 // Add this helper function to get the latest version of each file type
@@ -516,6 +597,17 @@ function getLatestVersionFiles(files: vscode.Uri[]): vscode.Uri[] {
 }
 
 async function createGitHubRelease(version: string, message: string = '', title?: string) {
+    console.log(`createGitHubRelease called for version ${version}`);
+    
+    // ALWAYS check the current setting directly from configuration to ensure accuracy
+    const releaseEnabled = getGitHubReleaseEnabled();
+    if (!releaseEnabled) {
+        console.log('Automatic GitHub releases are disabled, skipping release creation');
+        return;
+    }
+    
+    console.log(`Creating GitHub release for version ${version}`);
+    
     // Prevent recursive releases
     if (isCreatingRelease) {
         console.log('Release creation already in progress, skipping to prevent recursion');
@@ -524,104 +616,11 @@ async function createGitHubRelease(version: string, message: string = '', title?
     
     isCreatingRelease = true;
     try {
-        // Use workspace-specific settings with user settings as fallback
-        const prefix = getWorkspaceConfig('releasePrefix', 'v');
+        // Show information message to indicate the release creation has started
+        vscode.window.showInformationMessage(`Creating GitHub release for v${version}...`);
         
-        // Run pre-release commands - use workspace-specific commands
-        const preReleaseCommands = getWorkspaceConfig<string[]>('preReleaseCommands', []);
-        if (preReleaseCommands.length > 0) {
-            try {
-                const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
-                if (!workspaceRoot) {
-                    throw new Error('No workspace folder found');
-                }
-
-                // Use VS Code's Terminal API instead of direct cp.exec
-                const terminal = vscode.window.createTerminal(`Version Sync Pre-release`);
-                terminal.show();
-                
-                // Run each command sequentially
-                const terminal_output = await new Promise<boolean>(async (resolve, reject) => {
-                    // Add a disposable for terminal close event
-                    const disposable = vscode.window.onDidCloseTerminal(closedTerminal => {
-                        if (closedTerminal === terminal) {
-                            // Terminal was closed by user
-                            disposable.dispose();
-                            reject(new Error('Pre-release command terminal was closed before completion'));
-                        }
-                    });
-                    
-                    try {
-                        // Create a progress indicator while commands are running
-                        await vscode.window.withProgress({
-                            location: vscode.ProgressLocation.Notification,
-                            title: "Running pre-release commands",
-                            cancellable: true
-                        }, async (progress, token) => {
-                            token.onCancellationRequested(() => {
-                                terminal.dispose();
-                                reject(new Error('Pre-release commands were canceled'));
-                            });
-                            
-                            for (let i = 0; i < preReleaseCommands.length; i++) {
-                                const cmd = preReleaseCommands[i];
-                                progress.report({ 
-                                    message: `Running command ${i + 1}/${preReleaseCommands.length}: ${cmd.length > 30 ? cmd.substring(0, 30) + '...' : cmd}`,
-                                    increment: (100 / preReleaseCommands.length) 
-                                });
-                                
-                                // Send the command to the terminal
-                                terminal.sendText(cmd, true);
-                                
-                                // Wait for a moment to let the command start
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                
-                                // Simple check - this doesn't guarantee command success
-                                // but gives time for the command to complete
-                                await new Promise(resolve => setTimeout(resolve, 5000));
-                            }
-                            
-                            // All commands were sent and given time to execute
-                            resolve(true);
-                        });
-                    } catch (e) {
-                        reject(e);
-                    } finally {
-                        // Clean up
-                        disposable.dispose();
-                        setTimeout(() => terminal.dispose(), 2000); // Give user time to see final output
-                    }
-                });
-            } catch (error: any) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-                vscode.window.showErrorMessage(`Pre-release command failed: ${errorMessage}`);
-                return;
-            }
-        }
-        
-        // Get token from VS Code's GitHub authentication
-        const token = await getGitHubToken();
-        
-        if (!token) {
-            const action = await vscode.window.showErrorMessage(
-                'GitHub authentication required for creating releases.',
-                'Sign in to GitHub'
-            );
-            
-            if (action === 'Sign in to GitHub') {
-                // Try to get the token again, this time forcing the login prompt
-                const newToken = await getGitHubToken();
-                if (!newToken) {
-                    vscode.window.showErrorMessage('GitHub authentication failed.');
-                    return;
-                }
-            } else {
-                return;
-            }
-        }
-
         // Find release assets
-        const includePatterns = getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
+        const includePatterns = githubApi.getWorkspaceConfig('includePackageFiles', ['*.vsix']) as string[];
         const assets: string[] = [];
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0].uri.fsPath;
         
@@ -637,39 +636,19 @@ async function createGitHubRelease(version: string, message: string = '', title?
             }
         }
 
-        try {
-            // Create the release
-            const octokit = new Octokit({ auth: token });
-            const repoUrl = await getRepoUrl();
-            const [owner, repo] = repoUrl.split('/').slice(-2);
-            
-            const releaseResponse = await octokit.rest.repos.createRelease({
-                owner,
-                repo,
-                tag_name: `${prefix}${version}`,
-                name: title || `Release ${prefix}${version}`,
-                body: message,
-                draft: false,
-                prerelease: false
-            });
-
-            // Upload assets if any
-            for (const asset of assets) {
-                const content = await fs.promises.readFile(asset);
-                await octokit.rest.repos.uploadReleaseAsset({
-                    owner,
-                    repo,
-                    release_id: releaseResponse.data.id,
-                    name: path.basename(asset),
-                    data: content as any
-                });
-            }
-
-            vscode.window.showInformationMessage(`Release ${prefix}${version} created successfully!`);
-        } catch (error: any) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-            vscode.window.showErrorMessage(`Failed to create release: ${errorMessage}`);
+        // Run any pre-release commands through GitHub API
+        const success = await githubApi.createRelease(version, message, title, assets);
+        
+        if (success) {
+            console.log(`Successfully created GitHub release for v${version}`);
+        } else {
+            console.error(`Failed to create GitHub release for v${version}`);
+            vscode.window.showErrorMessage(`Failed to create GitHub release for v${version}.`);
         }
+    } catch (error: any) {
+        console.error('Error creating GitHub release:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        vscode.window.showErrorMessage(`Failed to create GitHub release: ${errorMessage}`);
     } finally {
         isCreatingRelease = false;  // Reset the flag when done, even if there was an error
     }
@@ -1035,47 +1014,21 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 // Only set shouldUpdateVersion to true when we've actually updated the version
                 shouldUpdateVersion = true;
                 
-                // Force a refresh of the UI after version update with a small delay
-                setTimeout(() => {
-                    if (extensionState.versionProvider) {
-                        extensionState.versionProvider.refresh();
-                    }
-                    
-                    // Update UI components after refresh
-                    setTimeout(() => {
-                        updateVersionStatusBar();
-                    }, 100);
-                }, 200);
+                console.log('Updated version in package.json to:', version);
+                vscode.window.showInformationMessage(`Version updated from ${packageJson.version} to ${version}`);
                 
-                // If we have created a tag, push it to remote origin
-                if (enableAutoTag && type !== 'none') {
+                // Create GitHub release if enabled
+                const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+                if (getGitHubReleaseEnabled()) {
+                    console.log(`GitHub releases are enabled, creating release for v${version}`);
                     try {
-                        // Check if we have an origin remote
-                        const remotes = await execAsync('git remote', { cwd: workspaceFolders[0].uri.fsPath });
-                        const hasOrigin = remotes.split('\n').some(remote => remote.trim() === 'origin');
-                        
-                        // Create a tag
-                        await execAsync(`git tag -a v${version} -m "Version ${version}"`, { cwd: workspaceFolders[0].uri.fsPath });
-                        console.log(`Created git tag v${version}`);
-                        
-                        if (hasOrigin) {
-                            try {
-                                // Push the tag to origin
-                                await execAsync('git push origin --tags', { cwd: workspaceFolders[0].uri.fsPath });
-                            } catch (error: any) {
-                                console.error('Failed to push tags:', error);
-                                vscode.window.showWarningMessage(`Created local tag but failed to push to remote: ${error.message || 'Unknown error'}`);
-                            }
-                        } else {
-                            vscode.window.showInformationMessage('Created local tag. No remote "origin" configured for pushing tags.');
-                        }
-                    } catch (tagError: any) {
-                        console.error('Failed to create tag:', tagError);
-                        vscode.window.showErrorMessage(`Failed to create git tag: ${tagError.message}`);
+                        // Create the GitHub release with the commit message
+                        await createGitHubRelease(version, '', undefined);
+                    } catch (releaseError: any) {
+                        console.error('Failed to create GitHub release:', releaseError);
+                        vscode.window.showErrorMessage(`Failed to create GitHub release: ${releaseError.message || releaseError}`);
                     }
                 }
-                
-                vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
             } else {
                 // Not in a git repo, just update package.json
                 packageJson.version = version;
@@ -1092,19 +1045,8 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 // Only set shouldUpdateVersion to true when we've actually updated the version
                 shouldUpdateVersion = true;
                 
-                // Force a refresh of the UI after version update
-                setTimeout(() => {
-                    if (extensionState.versionProvider) {
-                        extensionState.versionProvider.refresh();
-                    }
-                    
-                    // Update UI components after refresh
-                    setTimeout(() => {
-                        updateVersionStatusBar();
-                    }, 100);
-                }, 200);
-                
-                vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${version}`);
+                console.log('Updated version in package.json to:', version);
+                vscode.window.showInformationMessage(`Version updated from ${packageJson.version} to ${version}`);
             }
         } finally {
             // If we stashed changes, pop them back
@@ -1112,6 +1054,7 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
                 try {
                     console.log('Popping stashed changes back');
                     await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
+                    console.log('Successfully restored stashed changes');
                 } catch (popError: any) {
                     console.error('Failed to pop stashed changes:', popError);
                     vscode.window.showErrorMessage(`Failed to restore your stashed changes: ${popError.message}. You may need to manually run 'git stash pop'.`);
@@ -1153,9 +1096,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create the version provider and initialize state
     extensionState.versionProvider = new VersionProvider();
     
-    // Load configuration once at the top
+    // Load configuration once at the top - use direct access for GitHub release setting
     const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-    enableGitHubRelease = config.get('enableGitHubRelease', false);
+    
+    // IMPORTANT: Use the helper function to ensure consistent access to settings
+    enableGitHubRelease = getGitHubReleaseEnabled();
     enableAutoTag = config.get('enableAutoTag', true);
 
     // Initialize version state
@@ -1308,26 +1253,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     const oldVersion = packageJson.version;
                     
                     if (oldVersion !== nextVer) {
-                        // Get the current commit message
-                        const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolder.uri.fsPath });
-                        const trimmedMsg = commitMsg.trim();
-                        
-                        // Add version to commit message using a clean format
-                        const versionFormats = {
-                            'arrow': `${trimmedMsg} → v${nextVer}`,
-                            'bump': `${trimmedMsg} ⇧ v${nextVer}`,
-                            'simple': `${trimmedMsg} v${nextVer}`,
-                            'release': `${trimmedMsg} 📦 v${nextVer}`,
-                            'brackets': `${trimmedMsg} (v${nextVer})`
-                        };
-                        
-                        const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
-                        const newMessage = trimmedMsg.includes(`v${nextVer}`) ? 
-                            trimmedMsg : 
-                            (versionFormats[format] || versionFormats.simple);
-                        
                         console.log(`Updating version from ${oldVersion} to ${nextVer}`);
-                        console.log(`Commit message will be: "${newMessage}"`);
                         
                         // Update version in package.json
                         packageJson.version = nextVer;
@@ -1337,7 +1263,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
                         try {
                             // Get the git root directory
-                            const gitRoot = await execAsync('git rev-parse --show-toplevel', { cwd: workspaceFolders[0].uri.fsPath });
+                            const gitRoot = await execAsync('git rev-parse --show-toplevel', { cwd: workspaceFolder.uri.fsPath });
                             const relativePath = path.relative(gitRoot.trim(), packageJsonPath);
                             
                             console.log('Updating version in git repo:', gitRoot.trim());
@@ -1346,7 +1272,7 @@ export async function activate(context: vscode.ExtensionContext) {
                             // First check if there are any other changes to package.json
                             // If so, we need to stash them first so we only commit version changes
                             const hasChanges = await execAsync(`git diff --quiet -- "${relativePath}" || echo "changes"`, { 
-                                cwd: workspaceFolders[0].uri.fsPath 
+                                cwd: workspaceFolder.uri.fsPath 
                             });
                             
                             let needsStash = hasChanges.trim() === "changes";
@@ -1356,7 +1282,7 @@ export async function activate(context: vscode.ExtensionContext) {
                                 console.log('Detected other changes to package.json, stashing before version update');
                                 // Stash only the package.json changes
                                 await execAsync(`git stash push -m "temp stash for version change" -- "${relativePath}"`, { 
-                                    cwd: workspaceFolders[0].uri.fsPath 
+                                    cwd: workspaceFolder.uri.fsPath 
                                 });
                                 stashCreated = true;
                                 console.log('Stashed other changes to package.json');
@@ -1365,7 +1291,6 @@ export async function activate(context: vscode.ExtensionContext) {
                             try {
                                 // Now read the current package.json without other pending changes
                                 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-                                const oldVersion = packageJson.version;
                                 
                                 // Update only the version
                                 packageJson.version = nextVer;
@@ -1373,46 +1298,77 @@ export async function activate(context: vscode.ExtensionContext) {
                                 console.log(`Updated package.json with only version change to ${nextVer}`);
                                 
                                 // Stage only the package.json file
-                                await execAsync(`git add "${relativePath}"`, { cwd: workspaceFolders[0].uri.fsPath });
+                                await execAsync(`git add "${relativePath}"`, { cwd: workspaceFolder.uri.fsPath });
                                 console.log(`Staged ${relativePath} with version change only`);
                                 
                                 // Show what's staged
                                 const diffCachedCmd = 'git diff --cached';
-                                const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolders[0].uri.fsPath });
+                                const stagedChanges = await execAsync(diffCachedCmd, { cwd: workspaceFolder.uri.fsPath });
                                 console.log('Staged changes:', stagedChanges);
                                 
                                 // Get the current commit message
-                                const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolders[0].uri.fsPath });
+                                const commitMsg = await execAsync('git log -1 --pretty=%B', { cwd: workspaceFolder.uri.fsPath });
+                                const trimmedMsg = commitMsg.trim();
                                 
                                 // Create updated commit message with version info if not already present
-                                let newMessage = commitMsg.trim();
+                                let newMessage = trimmedMsg;
                                 if (!newMessage.includes(`v${nextVer}`)) {
-                                    const versionFormats = {
-                                        'arrow': `${newMessage} → v${nextVer}`,
-                                        'bump': `${newMessage} ⇧ v${nextVer}`,
-                                        'simple': `${newMessage} v${nextVer}`,
-                                        'release': `${newMessage} 📦 v${nextVer}`,
-                                        'brackets': `${newMessage} (v${nextVer})`
+                                    // Split the commit message into lines to modify only the first line
+                                    const messageLines = newMessage.split('\n');
+                                    const firstLine = messageLines[0];
+                                    
+                                    // Format options for the first line only
+                                    const firstLineFormats = {
+                                        'arrow': `${firstLine} → v${nextVer}`,
+                                        'bump': `${firstLine} ⇧ v${nextVer}`,
+                                        'simple': `${firstLine} v${nextVer}`,
+                                        'release': `${firstLine} 📦 v${nextVer}`,
+                                        'brackets': `${firstLine} (v${nextVer})`
                                     };
                                     
+                                    // Apply the selected format to only the first line
                                     const format = vscode.workspace.getConfiguration(EXTENSION_NAME).get('versionFormat', 'arrow');
-                                    newMessage = versionFormats[format] || versionFormats.simple;
+                                    messageLines[0] = firstLineFormats[format] || firstLineFormats.simple;
+                                    
+                                    // Keep the rest of the commit message unchanged
+                                    newMessage = messageLines.join('\n');
                                 }
                                 
                                 console.log('Amending commit with message:', newMessage);
                                 // Amend the commit with the updated message
                                 await execAsync(`git commit --amend -m "${escapeCommitMessage(newMessage)}"`, { 
-                                    cwd: workspaceFolders[0].uri.fsPath 
+                                    cwd: workspaceFolder.uri.fsPath 
                                 });
+                                
+                                // Reset the cached version to force recalculation
+                                extensionState.versionProvider.lastCalculatedVersion = undefined;
+                                lastCalculatedVersion = undefined; // Reset global version cache too
+                                nextVersion = '';
+                                
+                                // Only set shouldUpdateVersion to true when we've actually updated the version
+                                shouldUpdateVersion = true;
                                 
                                 console.log('Updated version in package.json to:', nextVer);
                                 vscode.window.showInformationMessage(`Version updated from v${oldVersion} to v${nextVer}`);
+                                
+                                // Create GitHub release if enabled
+                                if (getGitHubReleaseEnabled()) {
+                                    console.log(`GitHub releases are enabled, creating release for v${nextVer}`);
+                                    try {
+                                        // Create the GitHub release with the commit message
+                                        await createGitHubRelease(nextVer, '', undefined);
+                                        // newMessage is undefined
+                                    } catch (releaseError: any) {
+                                        console.error('Failed to create GitHub release:', releaseError);
+                                        vscode.window.showErrorMessage(`Failed to create GitHub release: ${releaseError.message || releaseError}`);
+                                    }
+                                }
                             } finally {
                                 // If we stashed changes, pop them back
                                 if (stashCreated) {
                                     console.log('Restoring stashed changes to package.json');
                                     try {
-                                        await execAsync('git stash pop', { cwd: workspaceFolders[0].uri.fsPath });
+                                        await execAsync('git stash pop', { cwd: workspaceFolder.uri.fsPath });
                                         console.log('Successfully restored stashed changes');
                                     } catch (stashError) {
                                         console.error('Failed to restore stashed changes - may need manual intervention:', stashError);
@@ -1425,12 +1381,24 @@ export async function activate(context: vscode.ExtensionContext) {
                             }
                         } catch (error: any) {
                             console.error('Error updating version:', error);
-                            vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
+                            vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
                         }
+                        
+                        // Force a refresh of the UI after version update
+                        setTimeout(() => {
+                            extensionState.versionProvider.refresh();
+                            
+                            // Update UI components after refresh
+                            setTimeout(() => {
+                                updateVersionStatusBar();
+                            }, 100);
+                        }, 200);
+                    } else {
+                        console.log(`Version is already ${nextVer}, no update needed`);
                     }
                 } catch (error: any) {
-                    console.error('Error updating version after commit:', error);
-                    vscode.window.showErrorMessage(`Failed to update version: ${error.message}`);
+                    console.error('Error updating version:', error);
+                    vscode.window.showErrorMessage(`Failed to update version: ${error.message || error}`);
                 } finally {
                     isCommitting = false;
                     // Force a refresh after commit is complete
@@ -1593,31 +1561,77 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('github-versionsync.toggleGitHubRelease', async () => {
             console.log('Toggle GitHub release command triggered');
-            const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
-            const currentEnabled = config.get('enableGitHubRelease', false);
-            await config.update('enableGitHubRelease', !currentEnabled, vscode.ConfigurationTarget.Global);
-            vscode.window.showInformationMessage(`Automatic GitHub releases ${!currentEnabled ? 'enabled' : 'disabled'}`);
-            console.log('Refreshing version provider');
-            extensionState.versionProvider.refresh();
+            
+            try {
+                // Get the current value from all configuration scopes
+                const currentValue = getGitHubReleaseEnabled();
+                console.log(`Current GitHub release setting using getGitHubReleaseEnabled(): ${currentValue}`);
+                
+                // Toggle to the opposite value
+                const newValue = !currentValue;
+                console.log(`Toggling GitHub release setting from ${currentValue} to ${newValue}`);
+                
+                // Show a quick notification during update
+                vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `${newValue ? 'Enabling' : 'Disabling'} automatic GitHub releases...`,
+                    cancellable: false
+                }, async (progress) => {
+                    try {
+                        // Update the setting at all configuration levels
+                        await setGitHubReleaseEnabled(newValue);
+                        
+                        // Update global variable
+                        enableGitHubRelease = newValue;
+                        
+                        console.log(`GitHub release setting toggled to: ${newValue}`);
+                        
+                        // Show a confirmation message
+                        vscode.window.showInformationMessage(
+                            `Automatic GitHub releases ${newValue ? 'ENABLED' : 'DISABLED'}`,
+                            ...(newValue ? ['Configure Versions'] : [])
+                        ).then(selection => {
+                            if (selection === 'Configure Versions') {
+                                vscode.commands.executeCommand('workbench.action.openSettings', 'github-versionsync.releaseOn');
+                            }
+                        });
+                        
+                        // Force immediate refresh of the UI after config change
+                        if (extensionState.versionProvider) {
+                            console.log('Performing immediate tree view refresh after toggle');
+                            extensionState.versionProvider.refresh();
+                        }
+                    } catch (error) {
+                        console.error('Error toggling GitHub release setting:', error);
+                        vscode.window.showErrorMessage(`Failed to toggle GitHub release setting: ${error}`);
+                    }
+                    
+                    return Promise.resolve();
+                });
+            } catch (error) {
+                console.error('Error in toggleGitHubRelease command:', error);
+                vscode.window.showErrorMessage(`Failed to toggle GitHub release setting: ${error}`);
+            }
         })
     );
 
-    // Register create one-off release command
+    // Create one-off GitHub release command
     context.subscriptions.push(
         vscode.commands.registerCommand('github-versionsync.createOneOffRelease', async () => {
             console.log('Create one-off release command triggered');
             try {
                 // Try to get GitHub token first
-                const token = await getGitHubToken();
+                const token = await githubApi.getGitHubToken();
                 if (!token) {
                     const action = await vscode.window.showInformationMessage(
                         'GitHub authentication required for creating releases.',
-                        'Sign in to GitHub'
-                    );
+                        'Sign in to GitHub');
                     
                     if (action === 'Sign in to GitHub') {
-                        // Try to get the token again, this time forcing the login prompt
-                        const newToken = await getGitHubToken();
+                        // Try to authenticate with GitHub
+                        await vscode.commands.executeCommand('github-versionsync.githubAuth');
+                        // Check if we now have a token
+                        const newToken = await githubApi.getGitHubToken();
                         if (!newToken) {
                             vscode.window.showErrorMessage('GitHub authentication failed.');
                             return;
@@ -1626,12 +1640,20 @@ export async function activate(context: vscode.ExtensionContext) {
                         return;
                     }
                 }
-
-                // Show the webview
-                await releaseWebviewProvider.show();
+            
+                // Get current version
+                const currentVersion = getCurrentVersion();
+                if (!currentVersion) {
+                    vscode.window.showErrorMessage('Could not determine current version.');
+                    return;
+                }
+                
+                // Create a release webview
+                const releaseProvider = new ReleaseWebviewProvider(context);
+                releaseProvider.show();
             } catch (error: any) {
-                console.error('Create Release Error:', error);
-                vscode.window.showErrorMessage(`Failed to create release: ${error}`);
+                console.error('Error creating one-off release:', error);
+                vscode.window.showErrorMessage(`Failed to create release: ${error.message}`);
             }
         })
     );
@@ -1662,8 +1684,19 @@ export async function activate(context: vscode.ExtensionContext) {
             console.log('Configuration change detected');
             if (e.affectsConfiguration(EXTENSION_NAME)) {
                 const config = vscode.workspace.getConfiguration(EXTENSION_NAME);
+                
+                // Check if GitHub release setting was changed
+                if (e.affectsConfiguration(`${EXTENSION_NAME}.${GITHUB_RELEASE_KEY}`)) {
+                    const newValue = config.get(GITHUB_RELEASE_KEY, false);
+                    console.log(`${GITHUB_RELEASE_KEY} changed in settings to: ${newValue}`);
+                    
+                    // Update the global variable to match
+                    enableGitHubRelease = newValue;
+                    console.log(`Updated global enableGitHubRelease to: ${enableGitHubRelease}`);
+                }
+                
+                // Update other settings
                 enableAutoTag = config.get('enableAutoTag', true);
-                enableGitHubRelease = config.get('enableGitHubRelease', false);
                 const newVersionFile = config.get('versionFile', '');
                 
                 // Update status bar if version file changes
@@ -1678,6 +1711,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
                 
                 console.log(`Configuration updated - AutoTag: ${enableAutoTag}, GitHubRelease: ${enableGitHubRelease}, VersionFile: ${newVersionFile || 'none'}`);
+                
+                // Always refresh tree view to ensure UI stays in sync with settings
+                if (extensionState.versionProvider) {
+                    console.log('Refreshing tree view due to configuration change');
+                    extensionState.versionProvider.refresh();
+                }
             }
         })
     );
@@ -1705,6 +1744,42 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(refreshCommand);
+
+    // Register GitHub authentication command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('github-versionsync.githubAuth', async () => {
+            console.log('GitHub authentication command triggered');
+            
+            try {
+                // First check if we already have a valid token
+                const token = await githubApi.getGitHubToken();
+                
+                if (token) {
+                    vscode.window.showInformationMessage('Already authenticated with GitHub!');
+                    return;
+                }
+                
+                // No token, try to get one with UI
+                const session = await vscode.authentication.getSession('github', ['repo'], { 
+                    createIfNone: true
+                });
+                
+                if (session) {
+                    vscode.window.showInformationMessage('Successfully authenticated with GitHub!');
+                    
+                    // Refresh the UI
+                    if (extensionState.versionProvider) {
+                        extensionState.versionProvider.refresh();
+                    }
+                } else {
+                    vscode.window.showErrorMessage('Failed to authenticate with GitHub.');
+                }
+            } catch (error: any) {
+                console.error('GitHub authentication error:', error);
+                vscode.window.showErrorMessage(`GitHub authentication failed: ${error.message}`);
+            }
+        })
+    );
 }
 
 export function deactivate() {}
@@ -1740,4 +1815,16 @@ async function checkRemoteExists(cwd: string): Promise<boolean> {
 
 function showExtensionStateWarning(message: string) {
     extensionState.showStateWarning(message);
+}
+
+// Helper function to create error tree items
+function createErrorTreeItem(label: string, description?: string): vscode.TreeItem {
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon('error');
+    item.contextValue = 'error';
+    if (description) {
+        item.description = description;
+        item.tooltip = description;
+    }
+    return item;
 }
