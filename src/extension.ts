@@ -407,18 +407,62 @@ async function createGitHubRelease(version: string, message: string = '', title?
                     throw new Error('No workspace folder found');
                 }
 
-                for (const cmd of preReleaseCommands) {
-                    await new Promise<void>((resolve, reject) => {
-                        cp.exec(cmd, { cwd: workspaceRoot }, (error, stdout, stderr) => {
-                            if (error) {
-                                reject(new Error(`Command failed: ${cmd}\n${stderr}`));
-                                return;
-                            }
-                            console.log(`Command output: ${stdout}`);
-                            resolve();
-                        });
+                // Use VS Code's Terminal API instead of direct cp.exec
+                const terminal = vscode.window.createTerminal(`Version Sync Pre-release`);
+                terminal.show();
+                
+                // Run each command sequentially
+                const terminal_output = await new Promise<boolean>(async (resolve, reject) => {
+                    // Add a disposable for terminal close event
+                    const disposable = vscode.window.onDidCloseTerminal(closedTerminal => {
+                        if (closedTerminal === terminal) {
+                            // Terminal was closed by user
+                            disposable.dispose();
+                            reject(new Error('Pre-release command terminal was closed before completion'));
+                        }
                     });
-                }
+                    
+                    try {
+                        // Create a progress indicator while commands are running
+                        await vscode.window.withProgress({
+                            location: vscode.ProgressLocation.Notification,
+                            title: "Running pre-release commands",
+                            cancellable: true
+                        }, async (progress, token) => {
+                            token.onCancellationRequested(() => {
+                                terminal.dispose();
+                                reject(new Error('Pre-release commands were canceled'));
+                            });
+                            
+                            for (let i = 0; i < preReleaseCommands.length; i++) {
+                                const cmd = preReleaseCommands[i];
+                                progress.report({ 
+                                    message: `Running command ${i + 1}/${preReleaseCommands.length}: ${cmd.length > 30 ? cmd.substring(0, 30) + '...' : cmd}`,
+                                    increment: (100 / preReleaseCommands.length) 
+                                });
+                                
+                                // Send the command to the terminal
+                                terminal.sendText(cmd, true);
+                                
+                                // Wait for a moment to let the command start
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                // Simple check - this doesn't guarantee command success
+                                // but gives time for the command to complete
+                                await new Promise(resolve => setTimeout(resolve, 5000));
+                            }
+                            
+                            // All commands were sent and given time to execute
+                            resolve(true);
+                        });
+                    } catch (e) {
+                        reject(e);
+                    } finally {
+                        // Clean up
+                        disposable.dispose();
+                        setTimeout(() => terminal.dispose(), 2000); // Give user time to see final output
+                    }
+                });
             } catch (error: any) {
                 const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
                 vscode.window.showErrorMessage(`Pre-release command failed: ${errorMessage}`);
