@@ -1,6 +1,8 @@
-# GitHub Version Sync 🚀
+# GitHub Version Sync 🚀 (Alpha)
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
+
+View the source code on [GitHub](https://github.com/Triex/GitHub-Version-Sync).
 
 <div align="center">
   <table>
@@ -41,6 +43,11 @@ Streamline version management and GitHub releases directly from VS Code / your I
 - Configure which version types trigger releases
 - Supports release assets
 - Supports release commands
+
+### 🔧 Robust Commit Handling
+- Properly escapes special characters in commit messages (", `, $)
+- Reliable changelog generation even with complex Git histories
+- Fallback options ensure releases always have useful content
 
 ### 🎨 User-Friendly Interface
 - Version control buttons in Source Control panel
@@ -199,8 +206,8 @@ When creating a new GitHub release, you can now choose to include the full commi
 ```
 feat: Smart release asset selection
 
-This feature intelligently filters release assets to prevent including multiple versions 
-of the same package. It groups files with similar base names, ignoring version numbers, 
+This feature intelligently filters release assets to prevent including multiple versions
+of the same package. It groups files with similar base names, ignoring version numbers,
 and selects only the most recently modified file from each group to include in releases.
 ```
 
@@ -243,7 +250,7 @@ Access these commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
 ## 📋 Requirements
 
-- Visual Studio Code v1.94.0 or higher
+- Visual Studio Code v1.80.0 or higher
 - Git installed and configured
 - Node.js v18.0.0 or higher
 
@@ -278,13 +285,18 @@ Want to contribute? Great! See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 ## 🐛 Reporting Issues
 
-Found a bug or have a feature request? Please [open an issue](https://github.com/TriexDev/GitHub-Version-Sync/issues/new) on GitHub.
+Found a bug or have a feature request? Please [open an issue](https://github.com/Triex/GitHub-Version-Sync/issues/new) on GitHub.
 
 ---
 
-## 📄 No License
+## 📄 License
 
-This extension currently has no license.
+This extension is licensed under the custom "Code With Credit" License. See the [LICENSE](https://github.com/Triex/GitHub-Version-Sync/blob/main/LICENSE) file for details.
+
+### License Summary
+- **For Individuals & Open Source**: Free to use with attribution
+- **For Commercial & Corporate**: Requires separate license agreement
+- Contact TriexDev via GitHub for commercial licensing options
 
 ---
 

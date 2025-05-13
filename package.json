@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "TriexDev",
   "icon": "images/icon.png",
   "screenshots": [
@@ -16,7 +16,7 @@
     }
   ],
   "engines": {
-    "vscode": "^1.94.0",
+    "vscode": "^1.80.0",
     "node": ">=18.0.0"
   },
   "categories": [
@@ -46,7 +46,7 @@
       "description": "VS Marketplace Downloads"
     }
   ],
-  "preview": true,
+  "preview": false,
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
@@ -73,8 +73,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/TriexDev/IDE-Easy-Commit"
+    "url": "https://github.com/Triex/GitHub-Version-Sync"
   },
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "vscode:prepublish": "tsc -p ./",
     "build": "node -e \"try { require('child_process').execSync('bun -v', {stdio: 'ignore'}); require('child_process').execSync('bun run build:bun', {stdio: 'inherit'}); } catch(e) { require('child_process').execSync('npm run build:npm', {stdio: 'inherit'}); }\"",
@@ -90,7 +91,7 @@
   "devDependencies": {
     "@types/glob": "^8.1.0",
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.94.0",
+    "@types/vscode": "^1.80.0",
     "@vscode/vsce": "^2.24.0",
     "typescript": "^5.0.0"
   },
@@ -112,7 +113,8 @@
         {
           "id": "scm-version-selector",
           "name": "Version Control",
-          "when": "git.state == initialized"
+          "when": "git.state == initialized",
+          "icon": "$(versions)"
         }
       ]
     },
