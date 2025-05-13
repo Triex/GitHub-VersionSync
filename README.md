@@ -1,4 +1,22 @@
-# GitHub Version Sync 🚀 (Alpha)
+# GitHub Version Sync
+
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/TriexDev.github-versionsync?style=flat-square&logo=visualstudiocode&logoColor=white&label=Marketplace&labelColor=007ACC)](https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync)
+[![VS Code Installs](https://img.shields.io/visual-studio-marketplace/i/TriexDev.github-versionsync?style=flat-square&logo=visualstudiocode&logoColor=white&label=Installs&labelColor=007ACC)](https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync)
+[![VS Code Rating](https://img.shields.io/visual-studio-marketplace/r/TriexDev.github-versionsync?style=flat-square&logo=visualstudiocode&logoColor=white&label=Rating&labelColor=007ACC)](https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync)
+[![License](https://img.shields.io/badge/License-Code_With_Credit-blue?style=flat-square)](https://github.com/Triex/github-version-sync/blob/master/LICENSE)
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![VS Code API](https://img.shields.io/badge/VS_Code_API-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/api)
+[![Jest](https://img.shields.io/badge/Jest-C21325?style=flat-square&logo=jest&logoColor=white)](https://jestjs.io/)
+[![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+
+[![GitHub Repo stars](https://img.shields.io/github/stars/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/issues)
+[![GitHub last commit](https://img.shields.io/github/last-commit/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/commits)
+[![GitHub Release Date](https://img.shields.io/github/release-date/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/releases)
+[![Maintenance](https://img.shields.io/maintenance/yes/2025?style=flat-square)](https://github.com/Triex/GitHub-Version-Sync/commits)
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
