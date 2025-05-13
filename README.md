@@ -2,7 +2,7 @@
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
-View the source code on [GitHub](https://github.com/Triex/GitHub-Version-Sync).
+View the source code on [GitHub](https://github.com/Triex/GitHub-Version-Sync). _Note: This extension is currently in alpha and may have bugs or limitations._
 
 <div align="center">
   <table>
