@@ -7,6 +7,15 @@ const execAsync = util.promisify(child_process.exec);
 export const EXTENSION_NAME = 'github-versionsync';
 
 /**
+ * Escape special characters in strings used in git commands
+ * This prevents issues with quotes in commit messages
+ */
+export function escapeGitString(str: string): string {
+    // Escape double quotes with backslash
+    return str.replace(/"/g, '\\"');
+}
+
+/**
  * Class to handle changelog generation functionality
  */
 export class ChangelogGenerator {
@@ -86,9 +95,12 @@ export class ChangelogGenerator {
         formatString += '%n%b';
         
         // Get the commit history with full message bodies
+        // Properly escape formatString to prevent issues with quotes
+        const escapedFormatString = escapeGitString(formatString);
+        
         const gitLogCommand = lastTag
-            ? `git log ${lastTag}..HEAD --pretty=format:"${formatString}" --date=short`
-            : `git log --pretty=format:"${formatString}" --date=short`;
+            ? `git log ${lastTag}..HEAD --pretty=format:"${escapedFormatString}" --date=short`
+            : `git log --pretty=format:"${escapedFormatString}" --date=short`;
         
         const result = await execAsync(gitLogCommand, { 
             cwd: workspaceFolder.uri.fsPath 
@@ -187,9 +199,11 @@ export class ChangelogGenerator {
         formatString += '"';
 
         // Get commit history with format based on user preferences
+        const escapedFormatString = escapeGitString(formatString);
+        
         const gitLogCommand = lastTag
-            ? `git log ${lastTag}..HEAD --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
-            : `git log --pretty=format:${formatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`;
+            ? `git log ${lastTag}..HEAD --pretty=format:${escapedFormatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`
+            : `git log --pretty=format:${escapedFormatString} --date=short | sed -E 's/v([0-9]+\\.[0-9]+\\.[0-9]+)/[\\1]/g'`;
 
         const result = await execAsync(gitLogCommand, { 
             cwd: workspaceFolder.uri.fsPath 

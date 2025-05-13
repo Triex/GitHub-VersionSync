@@ -1365,10 +1365,13 @@ async function updateVersion(version: string, type: VersionType = 'patch') {
     }
 }
 
-// Add a helper function to escape backticks in commit messages
+// Add a helper function to escape special characters in commit messages
 function escapeCommitMessage(message: string): string {
-    // Replace backticks with escaped backticks for shell execution
-    return message.replace(/`/g, '\\`');
+    // Replace special characters with escaped versions for shell execution
+    return message
+        .replace(/"/g, '\\"') // Escape double quotes
+        .replace(/`/g, '\\`')  // Escape backticks
+        .replace(/\$/g, '\\$'); // Escape dollar signs (for template strings)
 }
 
 let debounce = function(func: Function, wait: number) {
@@ -1432,8 +1435,9 @@ async function createGitTag(version: string): Promise<void> {
         const prefix = githubApi.getWorkspaceConfig('releasePrefix', 'v');
         const tagName = `${prefix}${version}`;
         
-        // Create the tag
-        const createTagResult = await execAsync(`git tag -a ${tagName} -m "Release ${tagName}"`, { 
+        // Create the tag (escaping the message to handle special characters)
+        const tagMessage = escapeCommitMessage(`Release ${tagName}`);
+        const createTagResult = await execAsync(`git tag -a ${tagName} -m "${tagMessage}"`, { 
             cwd: workspaceRoot 
         });
         console.log(`Created Git tag ${tagName}`);
