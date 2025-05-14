@@ -7,3 +7,11 @@ bun.lockb
 **/*.map
 **/*.ts
 !images/*.png
+
+# Exclude website directory
+website/**
+website
+
+# Exclude other unnecessary files
+node_modules/**
+.git
