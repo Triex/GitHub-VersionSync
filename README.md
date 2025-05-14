@@ -20,7 +20,7 @@
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
-📚 **[Documentation & Guides](https://versionsync.vercel.app)** | 💻 [Source Code](https://github.com/Triex/GitHub-VersionSync)
+📚 **[Documentation & Guides](https://VersionSync.app)** | 💻 [Source Code](https://github.com/Triex/GitHub-VersionSync)
 
 _Note: This extension is currently in alpha and may have bugs or limitations._
 
