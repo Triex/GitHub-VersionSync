@@ -117,8 +117,9 @@ export default function DownloadPage() {
         <div className="grid md:grid-cols-2 gap-8 mb-16">
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-8 transform transition-transform hover:scale-[1.02]">
             <div className="mb-4">
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+              <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 flex items-center">
                 VSCode Extension
+                <span className="ml-2 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded-full">Coming Soon</span>
               </h2>
               <p className="text-slate-600 dark:text-slate-300">
                 Install our VSCode extension directly from the marketplace for
@@ -127,10 +128,9 @@ export default function DownloadPage() {
             </div>
             <div className="flex justify-between items-center">
               <div>
-                <Link
-                  href="https://marketplace.visualstudio.com/items?itemName=TriexDev.github-versionsync"
-                  target="_blank"
-                  className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                <button
+                  disabled
+                  className="inline-flex items-center px-4 py-2 bg-gray-400 text-white rounded-lg cursor-not-allowed opacity-75"
                 >
                   <svg
                     className="mr-2 h-5 w-5"
@@ -147,7 +147,7 @@ export default function DownloadPage() {
                     />
                   </svg>
                   Install from Marketplace
-                </Link>
+                </button>
               </div>
               <div className="text-sm text-slate-500 dark:text-slate-400">
                 For VSCode 1.80+
