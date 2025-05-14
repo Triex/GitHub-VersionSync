@@ -25,6 +25,8 @@ website
 # Exclude potentially problematic files
 REPO_DESCRIPTION.md
 WEBSITE.md
+MARKETPLACE_SUPPORT.md
 .git/**
 *.sh
 .github/**
+images/README.md

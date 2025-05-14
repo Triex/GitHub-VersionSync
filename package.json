@@ -2,7 +2,7 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "publisher": "TriexDev",
   "homepage": "https://versionsync.vercel.app",
   "icon": "images/icon.png",
@@ -25,11 +25,16 @@
     "Other"
   ],
   "keywords": [
-    "version",
+    "version control",
+    "git tags",
     "github",
-    "release",
+    "releases",
+    "version",
+    "semantic versioning",
     "semver",
-    "tag"
+    "automation",
+    "git",
+    "versioning"
   ],
   "galleryBanner": {
     "color": "#1e1e1e",
@@ -48,11 +53,13 @@
     }
   ],
   "preview": false,
+  "pricing": "Free",
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
       "description": "This extension requires workspace trust to access Git and GitHub features."
-    }
+    },
+    "virtualWorkspaces": false
   },
   "features": [
     {
@@ -100,8 +107,25 @@
     "typescript": "^5.0.0"
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:github-versionsync.refreshTreeView",
+    "onCommand:github-versionsync.showOutputChannel",
+    "onView:versionControlPanel",
+    "workspaceContains:package.json"
   ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "restrictedSecurityExecution": {
+    "supportedExecutions": [
+      "execProcess"
+    ],
+    "requiresElevatedPermissions": true,
+    "permissions": [
+      "version-management",
+      "git-integration"
+    ]
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
