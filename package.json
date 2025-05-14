@@ -2,8 +2,9 @@
   "name": "github-versionsync",
   "displayName": "GitHub Version Sync",
   "description": "Streamline version management and GitHub releases with automatic version bumping, git tagging, and customisable release notes.",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "publisher": "TriexDev",
+  "homepage": "https://versionsync.vercel.app",
   "icon": "images/icon.png",
   "screenshots": [
     {
@@ -73,16 +74,18 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Triex/GitHub-VersionSync"
+    "url": "https://github.com/Triex/GitHub-VersionSync.git"
   },
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
-    "vscode:prepublish": "tsc -p ./",
-    "build": "node -e \"try { require('child_process').execSync('bun -v', {stdio: 'ignore'}); require('child_process').execSync('bun run build:bun', {stdio: 'inherit'}); } catch(e) { require('child_process').execSync('npm run build:npm', {stdio: 'inherit'}); }\"",
-    "build:bun": "tsc -p ./ && npx @vscode/vsce package",
-    "build:npm": "tsc -p ./ && npx @vscode/vsce package",
-    "compile": "tsc -p ./",
+    "vscode:prepublish": "bun run bundle",
+    "build": "bun run bundle && bun x vsce package",
+    "build:bun": "tsc -p ./",
+    "build:npm": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "bundle": "tsc -p ./ && bun esbuild.js",
+    "compile": "tsc -p ./",
     "test": "echo \"No tests yet\""
   },
   "dependencies": {
@@ -92,7 +95,8 @@
     "@types/glob": "^8.1.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
-    "@vscode/vsce": "^2.24.0",
+    "@vscode/vsce": "^3.3.2",
+    "esbuild": "^0.25.4",
     "typescript": "^5.0.0"
   },
   "activationEvents": [
@@ -310,7 +314,7 @@
       ]
     }
   },
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "markdown": "github",
   "qna": "marketplace"
 }

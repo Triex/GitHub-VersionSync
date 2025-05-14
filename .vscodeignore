@@ -4,10 +4,27 @@ src/**
 .gitignore
 .yarnrc
 bun.lockb
+package-lock.json
+yarn.lock
 **/*.map
 **/*.ts
+out/**
+esbuild.js
 !images/*.png
+
+# Now that we bundle, we can exclude all node_modules
+node_modules/**
 
 # Exclude website directory
 website/**
 website
+
+# Exclude all SVG files
+**/*.svg
+
+# Exclude potentially problematic files
+REPO_DESCRIPTION.md
+WEBSITE.md
+.git/**
+*.sh
+.github/**
