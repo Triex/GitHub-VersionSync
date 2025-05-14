@@ -81,8 +81,8 @@ export default async function DocsLayout({
         </div>
       </Section>
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex flex-col lg:flex-row gap-10">
+      <div className="container mx-auto px-2 sm:px-4 py-4 sm:py-6 lg:py-8">
+        <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 lg:gap-10">
           {/* Sidebar navigation for documentation */}
           <aside className="lg:w-72 flex-shrink-0">
             <div className="lg:sticky lg:top-8 overflow-y-auto pb-12">
@@ -94,7 +94,7 @@ export default async function DocsLayout({
 
           {/* Main content area */}
           <main className="flex-1 min-w-0">
-            <Card className="p-8">{children}</Card>
+            <Card className="p-3 sm:p-5 lg:p-8">{children}</Card>
           </main>
         </div>
       </div>

@@ -47,7 +47,7 @@ export default async function Page({ params }: { params: CategorySlugParams }) {
 
     // Simple navigation without prev/next
     return (
-      <div className="max-w-4xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto py-4 sm:py-6 lg:py-10 px-2 sm:px-4 lg:px-8">
         <div className="flex justify-center mb-6">
           <Badges />
         </div>

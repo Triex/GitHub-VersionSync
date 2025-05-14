@@ -33,8 +33,26 @@ const sectionIcons: Record<string, React.ReactNode> = {
 };
 
 function DocCard({ title, slug, description, icon }: { title: string, slug: string, description: string, icon?: React.ReactNode }) {
+  // Get the default doc for each category based on common patterns
+  const getDefaultDoc = (category: string) => {
+    switch(category) {
+      case 'getting-started':
+        return 'introduction';
+      case 'usage':
+        return 'basic-usage';
+      case 'configuration':
+        return 'settings';
+      case 'contributing':
+        return 'how-to-contribute';
+      case 'troubleshooting':
+        return 'common-issues';
+      default:
+        return 'introduction';
+    }
+  };
+
   return (
-    <Link href={`/docs/${slug}`} className="block">
+    <Link href={`/docs/${slug}/${getDefaultDoc(slug)}`} className="block">
       <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-md hover:shadow-lg transition-all hover:scale-[1.02] border border-transparent hover:border-indigo-100 dark:hover:border-indigo-900">
         <div className="flex items-center gap-3 mb-3">
           <div className="p-2 bg-indigo-100 dark:bg-indigo-900 rounded-lg text-indigo-600 dark:text-indigo-300">
