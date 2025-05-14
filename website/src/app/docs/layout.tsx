@@ -4,6 +4,7 @@ import { getDocCategories, getDocsByCategory } from '@/lib/markdown';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { Section } from '@/components/ui/Section';
+import { PageTransition } from '@/components/ui/PageTransition';
 
 export const metadata = {
   title: 'Documentation | GitHub Version Sync',
@@ -94,7 +95,9 @@ export default async function DocsLayout({
 
           {/* Main content area */}
           <main className="flex-1 min-w-0">
-            <Card className="p-3 sm:p-5 lg:p-8">{children}</Card>
+            <Card className="p-3 sm:p-5 lg:p-8">
+              <PageTransition>{children}</PageTransition>
+            </Card>
           </main>
         </div>
       </div>
