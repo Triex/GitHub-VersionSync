@@ -16,7 +16,7 @@ Before installing GitHub Version Sync, ensure you have:
 - **Git** installed and configured on your system
 - A **GitHub account** for GitHub release functionality (optional)
 
-## Installing from VS Code Marketplace
+## Installing from VS Code Marketplace (coming soon)
 
 The easiest way to install GitHub Version Sync is directly from the VS Code Marketplace:
 
@@ -51,6 +51,8 @@ If you want to use the GitHub release functionality, you'll need to set up authe
 2. Create a token with the `repo` scope
 3. The extension will prompt you for this token when needed
 4. Tokens are securely stored in VS Code's built-in secret storage
+
+If you try to create a release without setting this up, it will prompt you with a quick connect button.
 
 ## What's Next?
 
