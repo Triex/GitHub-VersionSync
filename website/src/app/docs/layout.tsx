@@ -95,7 +95,7 @@ export default async function DocsLayout({
 
           {/* Main content area */}
           <main className="flex-1 min-w-0">
-            <Card className="p-3 sm:p-5 lg:p-8">
+            <Card className="p-0 sm:p-0 lg:p-0">
               <PageTransition>{children}</PageTransition>
             </Card>
           </main>
