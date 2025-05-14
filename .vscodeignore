@@ -12,6 +12,6 @@ bun.lockb
 website/**
 website
 
-# Exclude other unnecessary files
+# Properly exclude node_modules
 node_modules/**
-.git
+node_modules
