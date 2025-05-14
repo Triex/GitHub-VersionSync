@@ -12,15 +12,15 @@
 [![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/issues)
-[![GitHub last commit](https://img.shields.io/github/last-commit/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/commits)
-[![GitHub Release Date](https://img.shields.io/github/release-date/Triex/GitHub-Version-Sync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-Version-Sync/releases)
-[![Maintenance](https://img.shields.io/maintenance/yes/2025?style=flat-square)](https://github.com/Triex/GitHub-Version-Sync/commits)
+[![GitHub Repo stars](https://img.shields.io/github/stars/Triex/GitHub-VersionSync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-VersionSync/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/Triex/GitHub-VersionSync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-VersionSync/issues)
+[![GitHub last commit](https://img.shields.io/github/last-commit/Triex/GitHub-VersionSync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-VersionSync/commits)
+[![GitHub Release Date](https://img.shields.io/github/release-date/Triex/GitHub-VersionSync?style=flat-square&logo=github)](https://github.com/Triex/GitHub-VersionSync/releases)
+[![Maintenance](https://img.shields.io/maintenance/yes/2025?style=flat-square)](https://github.com/Triex/GitHub-VersionSync/commits)
 
 Streamline version management and GitHub releases directly from VS Code / your IDE. Automatically update version numbers, create git tags, and publish GitHub releases with just a few clicks.
 
-📚 **[Documentation & Guides](https://versionsync.vercel.app)** | 💻 [Source Code](https://github.com/Triex/GitHub-Version-Sync)
+📚 **[Documentation & Guides](https://versionsync.vercel.app)** | 💻 [Source Code](https://github.com/Triex/GitHub-VersionSync)
 
 _Note: This extension is currently in alpha and may have bugs or limitations._
 
@@ -307,13 +307,13 @@ Want to contribute? Great! See [CONTRIBUTING.md](CONTRIBUTING.md) for developmen
 
 ## 🐛 Reporting Issues
 
-Found a bug or have a feature request? Please [open an issue](https://github.com/Triex/GitHub-Version-Sync/issues/new) on GitHub.
+Found a bug or have a feature request? Please [open an issue](https://github.com/Triex/GitHub-VersionSync/issues/new) on GitHub.
 
 ---
 
 ## 📄 License
 
-This extension is licensed under the custom "Code With Credit" License. See the [LICENSE](https://github.com/Triex/GitHub-Version-Sync/blob/main/LICENSE) file for details.
+This extension is licensed under the custom "Code With Credit" License. See the [LICENSE](https://github.com/Triex/GitHub-VersionSync/blob/main/LICENSE) file for details.
 
 ### License Summary
 - **For Individuals & Open Source**: Free to use with attribution

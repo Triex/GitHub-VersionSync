@@ -61,7 +61,7 @@
 export default async function HomePage() {
   // This is a server component (implicit with Next.js 15)
   const extensionData = await getExtensionData(); // Server-side data fetching
-  
+
   return (
     <div className="container">
       <HeroSection data={extensionData} />
@@ -83,7 +83,7 @@ import { useState } from 'react';
 
 export default function DemoSection() {
   const [currentDemo, setCurrentDemo] = useState('version-update');
-  
+
   return (
     <div className="demo-container">
       <DemoTabs current={currentDemo} onChange={setCurrentDemo} />
@@ -101,7 +101,7 @@ export default function DemoSection() {
 
 export async function subscribeToNewsletter(formData: FormData) {
   const email = formData.get('email') as string;
-  
+
   try {
     await addSubscriber(email);
     return { success: true };
@@ -125,7 +125,7 @@ export async function generateStaticParams() {
 
 export default async function DocPage({ params }: { params: { slug: string } }) {
   const doc = await getDocBySlug(params.slug);
-  
+
   return (
     <article className="prose lg:prose-xl dark:prose-invert">
       <h1>{doc.title}</h1>
@@ -191,7 +191,7 @@ export const metadata: Metadata = {
 
 **Implementation:**
 ```
-/GitHub-Version-Sync
+/GitHub-VersionSync
 ├── /src                 # Extension source code
 ├── /website             # Website code
 ├── package.json         # Extension package.json

@@ -21,7 +21,7 @@ Thank you for your interest in contributing to GitHub Version Sync! This guide w
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Triex/GitHub-Version-Sync.git
+   git clone https://github.com/Triex/GitHub-VersionSync.git
    cd GitHub-Version-Sync
    ```
 
@@ -74,7 +74,7 @@ bun run test
    git push -u origin feature/your-feature-name
    ```
 
-4. Go to the [repository on GitHub](https://github.com/Triex/GitHub-Version-Sync) and create a Pull Request.
+4. Go to the [repository on GitHub](https://github.com/Triex/GitHub-VersionSync) and create a Pull Request.
 
 ### Pull Request Guidelines
 
@@ -102,7 +102,7 @@ The project uses ESLint and TypeScript. Before submitting your PR:
 
 If you find a bug or have a feature request:
 
-1. Check if the issue already exists in the [GitHub issues](https://github.com/Triex/GitHub-Version-Sync/issues)
+1. Check if the issue already exists in the [GitHub issues](https://github.com/Triex/GitHub-VersionSync/issues)
 2. If not, create a new issue with a clear title and description
 3. Include steps to reproduce for bugs
 4. Add screenshots if applicable

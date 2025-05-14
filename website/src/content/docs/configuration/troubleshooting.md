@@ -106,6 +106,6 @@ If you're experiencing persistent issues that aren't resolved by the above solut
 
 If you're still experiencing issues:
 
-1. Check the [GitHub repository issues](https://github.com/Triex/GitHub-Version-Sync/issues) to see if your problem has been reported
+1. Check the [GitHub repository issues](https://github.com/Triex/GitHub-VersionSync/issues) to see if your problem has been reported
 2. Create a new issue with detailed information about your problem
 3. Include your extension settings, VS Code version, and OS details

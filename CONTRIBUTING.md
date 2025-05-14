@@ -6,7 +6,7 @@ Thank you for your interest in contributing to GitHub Version Sync! This documen
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Triex/GitHub-Version-Sync.git
+   git clone https://github.com/Triex/GitHub-VersionSync.git
    cd GitHub-Version-Sync
    ```
 

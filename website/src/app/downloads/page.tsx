@@ -33,7 +33,7 @@ export default function DownloadPage() {
     const fetchReleases = async () => {
       try {
         setLoading(true);
-        const res = await fetch('https://api.github.com/repos/Triex/GitHub-Version-Sync/releases');
+        const res = await fetch('https://api.github.com/repos/Triex/GitHub-VersionSync/releases');
 
         if (!res.ok) {
           throw new Error(`Failed to fetch releases: ${res.status}`);
@@ -167,7 +167,7 @@ export default function DownloadPage() {
             </div>
             <div className="flex justify-between items-center">
               <Link
-                href="https://github.com/Triex/GitHub-Version-Sync/releases"
+                href="https://github.com/Triex/GitHub-VersionSync/releases"
                 target="_blank"
                 className="inline-flex items-center px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors"
               >
@@ -224,7 +224,7 @@ export default function DownloadPage() {
               <div className="p-6 text-center text-red-500">
                 <p>Error loading releases: {error}</p>
                 <Link
-                  href="https://github.com/Triex/GitHub-Version-Sync/releases"
+                  href="https://github.com/Triex/GitHub-VersionSync/releases"
                   target="_blank"
                   className="block mt-4 text-indigo-500 hover:underline"
                 >
@@ -235,7 +235,7 @@ export default function DownloadPage() {
               <div className="p-6 text-center text-slate-600 dark:text-slate-400">
                 <p>No releases found. Check back soon!</p>
                 <Link
-                  href="https://github.com/Triex/GitHub-Version-Sync"
+                  href="https://github.com/Triex/GitHub-VersionSync"
                   target="_blank"
                   className="block mt-4 text-indigo-500 hover:underline"
                 >
@@ -435,7 +435,7 @@ export default function DownloadPage() {
               View Docs
             </Link>
             <Link
-              href="https://github.com/Triex/GitHub-Version-Sync"
+              href="https://github.com/Triex/GitHub-VersionSync"
               target="_blank"
               className="px-6 py-3 bg-white text-slate-800 dark:bg-slate-800 dark:text-white font-medium rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center"
             >

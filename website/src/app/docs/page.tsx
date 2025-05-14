@@ -254,7 +254,7 @@ export default function DocsPage() {
               Download
             </Link>
             <Link
-              href="https://github.com/Triex/GitHub-Version-Sync"
+              href="https://github.com/Triex/GitHub-VersionSync"
               target="_blank"
               className="px-6 py-2 bg-indigo-800 font-medium rounded-lg hover:bg-indigo-900 transition-colors flex items-center"
             >

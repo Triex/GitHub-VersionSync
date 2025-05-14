@@ -29,7 +29,7 @@ The easiest way to install GitHub Version Sync is directly from the VS Code Mark
 
 If you prefer to install the extension manually:
 
-1. Download the latest `.vsix` file from the [GitHub Releases page](https://github.com/Triex/GitHub-Version-Sync/releases)
+1. Download the latest `.vsix` file from the [GitHub Releases page](https://github.com/Triex/GitHub-VersionSync/releases)
 2. Open VS Code
 3. Open the Command Palette (`Ctrl+Shift+P`)
 4. Type "Extensions: Install from VSIX..." and select it

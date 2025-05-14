@@ -174,7 +174,7 @@ export default function Home() {
               Read Docs
             </a>
             <a
-              href="https://github.com/Triex/GitHub-Version-Sync"
+              href="https://github.com/Triex/GitHub-VersionSync"
               target="_blank"
               rel="noopener noreferrer"
               className="px-6 py-3 bg-blue-800 text-white font-semibold rounded-lg shadow-md border border-blue-400 hover:bg-blue-900 transition-colors duration-300"

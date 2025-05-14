@@ -63,7 +63,7 @@ export default async function DocsLayout({
               Download Extension
             </Link>
             <Link
-              href="https://github.com/Triex/GitHub-Version-Sync"
+              href="https://github.com/Triex/GitHub-VersionSync"
               target="_blank"
               className="px-6 py-2 bg-white text-slate-800 dark:bg-slate-800 dark:text-white font-medium rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center"
             >
