@@ -82,7 +82,7 @@ export default function DownloadPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-sky-50 dark:from-slate-900 dark:to-slate-800 px-4 py-10">
       <div className="max-w-5xl mx-auto">
-        <div className="mb-8">
+        <div className="mb-8 flex justify-between items-center">
           <Link
             href="/"
             className="inline-flex items-center text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 font-medium transition-colors"
@@ -103,6 +103,26 @@ export default function DownloadPage() {
             </svg>
             Back to Home
           </Link>
+          <Link
+            href="/docs"
+            className="inline-flex items-center text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 font-medium transition-colors"
+          >
+            Go to Docs
+            <svg
+              className="ml-2 h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M14 5l7 7m0 0l-7 7m7-7H3"
+              />
+            </svg>
+          </Link>
         </div>
         <div className="text-center mb-16">
           <h1 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-white mb-4">
@@ -119,7 +139,9 @@ export default function DownloadPage() {
             <div className="mb-4">
               <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2 flex items-center">
                 VSCode Extension
-                <span className="ml-2 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded-full">Coming Soon</span>
+                <span className="ml-2 px-2 py-1 text-xs font-semibold bg-amber-500 text-white rounded-full">
+                  Coming Soon
+                </span>
               </h2>
               <p className="text-slate-600 dark:text-slate-300">
                 Install our VSCode extension directly from the marketplace for
