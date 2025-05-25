@@ -1833,51 +1833,6 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // Register test command
-    const testCommand = vscode.commands.registerCommand('github-versionsync.testSourceControl', async () => {
-        console.log('Test command triggered');
-        
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            console.error('No workspace folder found');
-            return;
-        }
-        
-        // Test git extension access
-        if (gitExtension && gitApi) {
-            const repo = gitApi.repositories.find((repo: any) => 
-                repo.rootUri.fsPath === workspaceFolders[0].uri.fsPath
-            );
-
-            if (repo) {
-                console.log('Git repo found:', repo.rootUri.fsPath);
-                console.log('Current commit message:', repo.inputBox.value);
-                console.log('Staged changes:', repo.state.indexChanges.length);
-
-                // Try to read package.json from the repo
-                const workspaceRoot = repo.rootUri.fsPath;
-                const packageJsonPath = path.join(workspaceRoot, 'package.json');
-                try {
-                    const packageJson = require(packageJsonPath);
-                    console.log('Found package.json version:', packageJson.version);
-                } catch (error: any) {
-                    console.log('Error reading package.json:', error.message || 'Unknown error');
-                }
-            }
-        }
-
-        console.log('Current version mode:', currentVersionMode);
-        console.log('Current version:', extensionState.versionProvider.getCurrentVersion());
-        console.log('Next version:', nextVersion);
-        console.log('Enable auto tag:', enableAutoTag);
-        console.log('Enable GitHub release:', enableGitHubRelease);
-        
-        console.log('Refreshing version provider');
-        extensionState.versionProvider.refresh();
-        vscode.window.showInformationMessage('Test command executed successfully!');
-    });
-    context.subscriptions.push(testCommand);
-
     // Create and register the tree view
     extensionState.treeView = vscode.window.createTreeView('scm-version-selector', {
         treeDataProvider: extensionState.versionProvider,
@@ -2139,13 +2094,6 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Add test button
-    const testButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-    testButton.text = "$(versions) Test Version Control";
-    testButton.command = 'github-versionsync.testSourceControl';
-    testButton.tooltip = 'Click to test version control view';
-    testButton.show();
-    context.subscriptions.push(testButton);
 
     // Add explicit refresh command
     const refreshCommand = vscode.commands.registerCommand('github-versionsync.refreshTreeView', () => {
